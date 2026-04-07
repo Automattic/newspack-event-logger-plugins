@@ -22,6 +22,7 @@
 	"scripts": {
 		"lint": "phpcs",
 		"lint:fix": "phpcbf",
-		"build:autoloaders": "for dir in newspack-*/; do echo \"=== $dir ===\"; (cd \"$dir\" && composer install --no-dev --optimize-autoloader); done"
+		"build:autoloaders": "for dir in newspack-*/; do echo \"=== $dir ===\"; (cd \"$dir\" && composer install --no-dev --optimize-autoloader); done",
+		"build-release": "./build-release.sh"
 	}
 }
