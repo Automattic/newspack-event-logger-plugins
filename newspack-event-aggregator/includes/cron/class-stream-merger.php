@@ -460,7 +460,7 @@ class StreamMerger extends WorkerBase {
 				if ( 'entry' === $event['type'] && \is_array( $event['data'] )
 					&& isset( $event['data']['k'] ) && \is_string( $event['data']['k'] ) ) {
 					// Validate remote event data structure.
-					if ( ! isset( $event['data']['t'] ) || ! \is_numeric( $event['data']['t'] ) ) {
+					if ( ! isset( $event['data']['ts'] ) || ! \is_numeric( $event['data']['ts'] ) ) {
 						continue;
 					}
 					$event['data']['_source'] = $server_id;
