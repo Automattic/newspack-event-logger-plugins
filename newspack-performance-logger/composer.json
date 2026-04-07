@@ -1,0 +1,19 @@
+{
+	"name": "automattic/newspack-performance-logger",
+	"description": "Request performance logging and timing infrastructure",
+	"type": "wordpress-plugin",
+	"license": "GPL-2.0-or-later",
+	"require": {
+		"php": ">=8.0"
+	},
+	"autoload": {
+		"classmap": [
+			"includes/"
+		]
+	},
+	"config": {
+		"platform": {
+			"php": "8.0"
+		}
+	}
+}

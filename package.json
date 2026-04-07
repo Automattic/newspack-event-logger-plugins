@@ -1,0 +1,60 @@
+{
+	"name": "newspack-event-logger-plugins",
+	"version": "2.4.10",
+	"private": true,
+	"description": "Unified build for all Event Logger and Performance plugins.",
+	"author": "Automattic",
+	"license": "GPL-2.0-or-later",
+	"scripts": {
+		"build": "npm run clean && npm run sync && npm run build:dashboards && npm run build:performance && npm run build:logger && npm run build:gyroscope && npm run build:request-log && npm run build:aggregator && npm run build:aggregator-settings",
+		"build:aggregator": "wp-scripts build newspack-event-aggregator/src/index.js --output-path=newspack-event-aggregator/build/admin",
+		"build:aggregator-settings": "wp-scripts build newspack-event-aggregator/src/settings.js --output-path=newspack-event-aggregator/build/settings",
+		"build:dashboards": "wp-scripts build newspack-event-dashboards/src/index.js --output-path=newspack-event-dashboards/build/admin",
+		"build:gyroscope": "wp-scripts build newspack-performance-gyroscope/src/index.js --output-path=newspack-performance-gyroscope/build/admin",
+		"build:logger": "wp-scripts build newspack-performance-logger/src/index.js --output-path=newspack-performance-logger/build/admin",
+		"build:performance": "wp-scripts build newspack-performance-dashboards/src/index.js --output-path=newspack-performance-dashboards/build/admin",
+		"build:request-log": "wp-scripts build newspack-performance-request-log/src/index.js --output-path=newspack-performance-request-log/build/admin",
+		"clean": "rm -rf newspack-event-dashboards/build newspack-performance-dashboards/build newspack-performance-logger/build newspack-performance-gyroscope/build newspack-performance-request-log/build newspack-event-aggregator/build",
+		"composer:all": "for dir in newspack-*/; do echo \"=== $dir ===\"; (cd \"$dir\" && composer install --no-dev --optimize-autoloader); done",
+		"fix:js": "wp-scripts lint-js --fix '*/src/**/*.{js,jsx}'",
+		"fix:php": "phpcbf",
+		"fix:scss": "wp-scripts lint-style '*/src/**/*.scss' --customSyntax postcss-scss --fix",
+		"format": "wp-scripts format",
+		"format:js": "wp-scripts format '*/src/**/*.{js,jsx}'",
+		"lint:js": "wp-scripts lint-js '*/src/**/*.{js,jsx}'",
+		"lint:php": "phpcs",
+		"lint:scss": "wp-scripts lint-style '*/src/**/*.scss' --customSyntax postcss-scss",
+		"sync": "./sync-shared.sh",
+		"watch": "npm run clean && concurrently \"npm run watch:dashboards\" \"npm run watch:performance\" \"npm run watch:logger\" \"npm run watch:gyroscope\" \"npm run watch:request-log\" \"npm run watch:aggregator\" \"npm run watch:aggregator-settings\"",
+		"watch:aggregator": "wp-scripts start newspack-event-aggregator/src/index.js --output-path=newspack-event-aggregator/build/admin",
+		"watch:aggregator-settings": "wp-scripts start newspack-event-aggregator/src/settings.js --output-path=newspack-event-aggregator/build/settings",
+		"watch:dashboards": "wp-scripts start newspack-event-dashboards/src/index.js --output-path=newspack-event-dashboards/build/admin",
+		"watch:gyroscope": "wp-scripts start newspack-performance-gyroscope/src/index.js --output-path=newspack-performance-gyroscope/build/admin",
+		"watch:logger": "wp-scripts start newspack-performance-logger/src/index.js --output-path=newspack-performance-logger/build/admin",
+		"watch:performance": "wp-scripts start newspack-performance-dashboards/src/index.js --output-path=newspack-performance-dashboards/build/admin",
+		"watch:request-log": "wp-scripts start newspack-performance-request-log/src/index.js --output-path=newspack-performance-request-log/build/admin"
+	},
+	"dependencies": {
+		"@wordpress/api-fetch": "^7.0.0",
+		"@wordpress/components": "^28.0.0",
+		"@wordpress/element": "^6.0.0",
+		"@wordpress/icons": "^10.0.0",
+		"d3": "^7.8.5",
+		"d3-flame-graph": "^4.1.3"
+	},
+	"devDependencies": {
+		"@commitlint/cli": "^20.1.0",
+		"@commitlint/config-conventional": "^19.8.1",
+		"@wordpress/scripts": "^31.0.0",
+		"concurrently": "^8.2.0",
+		"lint-staged": "^15.5.2"
+	},
+	"lint-staged": {
+		"*.{js,jsx}": "wp-scripts lint-js",
+		"*.scss": "wp-scripts lint-style --customSyntax postcss-scss",
+		"*.php": "phpcs"
+	},
+	"browserslist": [
+		"extends @wordpress/browserslist-config"
+	]
+}

@@ -1,0 +1,19 @@
+{
+	"name": "automattic/newspack-performance-workers",
+	"description": "Background workers for performance data aggregation and auto-tuning",
+	"type": "wordpress-plugin",
+	"license": "GPL-2.0-or-later",
+	"require": {
+		"php": ">=8.0"
+	},
+	"autoload": {
+		"classmap": [
+			"includes/"
+		]
+	},
+	"config": {
+		"platform": {
+			"php": "8.0"
+		}
+	}
+}

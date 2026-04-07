@@ -1,0 +1,27 @@
+{
+	"name": "automattic/newspack-event-logger-plugins",
+	"description": "Event Logger plugins monorepo - logging, performance monitoring, and visualization",
+	"type": "project",
+	"license": "GPL-2.0-or-later",
+	"require": {
+		"php": ">=8.0"
+	},
+	"require-dev": {
+		"automattic/vipwpcs": "^3.0",
+		"wp-coding-standards/wpcs": "^3.0",
+		"dealerdirect/phpcodesniffer-composer-installer": "*"
+	},
+	"config": {
+		"platform": {
+			"php": "8.0"
+		},
+		"allow-plugins": {
+			"dealerdirect/phpcodesniffer-composer-installer": true
+		}
+	},
+	"scripts": {
+		"lint": "phpcs",
+		"lint:fix": "phpcbf",
+		"build:autoloaders": "for dir in newspack-*/; do echo \"=== $dir ===\"; (cd \"$dir\" && composer install --no-dev --optimize-autoloader); done"
+	}
+}

@@ -1,0 +1,23 @@
+<?php
+return [
+	'base_directory'              => '/tmp/event-logger-test-flamebuilder',
+	'num_partitions'              => 1,
+	'num_segments'                => 2,
+	'segment_size'                => 65536,
+	'max_lifespan'                => 86400,
+	'enable_logging'              => false,
+	'enable_workers'              => false,
+	'memcache_servers'            => [],
+	'allowed_users'               => [],
+	'log_urls'                    => [],
+	'skip_urls'                   => [],
+	'custom_colors'               => [],
+	'custom_events'               => [],
+	'log_events'                  => [],
+	'log_memory'                  => false,
+	'flush_every_line'            => false,
+	'auto_disable_threshold'      => 0,
+	'auto_protect_time_threshold' => 0,
+	'significant_events'          => [],
+	'aggregator_servers'          => [],
+];

@@ -1,0 +1,19 @@
+{
+	"name": "automattic/newspack-performance-request-log",
+	"description": "Request log viewer and analysis",
+	"type": "wordpress-plugin",
+	"license": "GPL-2.0-or-later",
+	"require": {
+		"php": ">=8.0"
+	},
+	"autoload": {
+		"classmap": [
+			"includes/"
+		]
+	},
+	"config": {
+		"platform": {
+			"php": "8.0"
+		}
+	}
+}

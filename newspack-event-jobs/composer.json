@@ -1,0 +1,19 @@
+{
+	"name": "automattic/newspack-event-jobs",
+	"description": "Background job processing for event logging",
+	"type": "wordpress-plugin",
+	"license": "GPL-2.0-or-later",
+	"require": {
+		"php": ">=8.0"
+	},
+	"autoload": {
+		"classmap": [
+			"includes/"
+		]
+	},
+	"config": {
+		"platform": {
+			"php": "8.0"
+		}
+	}
+}

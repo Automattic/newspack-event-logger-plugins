@@ -1,0 +1,19 @@
+# Parent-level dependencies (dev tools only)
+/node_modules/
+/vendor/
+
+# Lock files at parent level
+/package-lock.json
+/composer.lock
+
+# JS build outputs (regenerated on build)
+*/build/
+*/vendor/
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db

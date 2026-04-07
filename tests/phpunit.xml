@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="https://schema.phpunit.de/11.5/phpunit.xsd"
+         bootstrap="bootstrap.php"
+         colors="true"
+         cacheDirectory="/tmp/phpunit-cache"
+         executionOrder="depends,defects"
+         requireCoverageMetadata="false"
+         beStrictAboutOutputDuringTests="false"
+         displayDetailsOnTestsThatTriggerWarnings="true"
+         failOnWarning="false">
+    <testsuites>
+        <testsuite name="Unit Tests">
+            <directory>unit</directory>
+        </testsuite>
+    </testsuites>
+
+    <source>
+        <include>
+            <directory suffix=".php">/usr/src/newspack-event-logger/includes</directory>
+            <directory suffix=".php">/usr/src/newspack-event-jobs/includes</directory>
+            <directory suffix=".php">/usr/src/newspack-performance-logger/includes</directory>
+            <directory suffix=".php">/usr/src/newspack-performance-workers/includes</directory>
+            <directory suffix=".php">/usr/src/newspack-event-aggregator/includes</directory>
+            <directory suffix=".php">/usr/src/newspack-event-dashboards/includes</directory>
+            <directory suffix=".php">/usr/src/newspack-performance-dashboards/includes</directory>
+            <directory suffix=".php">/usr/src/newspack-performance-gyroscope/includes</directory>
+            <directory suffix=".php">/usr/src/newspack-performance-request-log/includes</directory>
+        </include>
+        <exclude>
+            <directory>/usr/src/newspack-event-logger/vendor</directory>
+            <directory>/usr/src/newspack-event-jobs/vendor</directory>
+            <directory>/usr/src/newspack-performance-logger/vendor</directory>
+            <directory>/usr/src/newspack-performance-workers/vendor</directory>
+            <directory>/usr/src/newspack-event-aggregator/vendor</directory>
+            <directory>/usr/src/newspack-event-dashboards/vendor</directory>
+            <directory>/usr/src/newspack-performance-dashboards/vendor</directory>
+            <!-- Admin UI — WordPress rendering, untestable -->
+            <directory>/usr/src/newspack-event-logger/includes/admin</directory>
+            <directory>/usr/src/newspack-event-dashboards/includes/admin</directory>
+            <directory>/usr/src/newspack-event-aggregator/includes/admin</directory>
+            <directory>/usr/src/newspack-performance-logger/includes/admin</directory>
+            <directory>/usr/src/newspack-performance-workers/includes/admin</directory>
+            <directory>/usr/src/newspack-performance-dashboards/includes/admin</directory>
+            <directory>/usr/src/newspack-performance-gyroscope/includes/admin</directory>
+            <directory>/usr/src/newspack-performance-request-log/includes/admin</directory>
+            <!-- CLI commands — need WP_CLI runtime -->
+            <directory>/usr/src/newspack-event-logger/includes/cli</directory>
+            <directory>/usr/src/newspack-performance-logger/includes/cli</directory>
+            <!-- SSE streaming controllers — long-running loops, untestable -->
+            <file>/usr/src/newspack-event-logger/includes/rest-api/class-sse-controller-base.php</file>
+            <file>/usr/src/newspack-event-logger/includes/rest-api/class-firehose-stream-controller.php</file>
+            <file>/usr/src/newspack-event-dashboards/includes/rest-api/class-rawlogs-controller.php</file>
+            <file>/usr/src/newspack-performance-dashboards/includes/rest-api/class-errors-controller.php</file>
+            <file>/usr/src/newspack-performance-gyroscope/includes/rest-api/class-gyroscope-controller.php</file>
+            <file>/usr/src/newspack-performance-request-log/includes/rest-api/class-requests-controller.php</file>
+            <file>/usr/src/newspack-event-aggregator/includes/cron/class-stream-merger.php</file>
+        </exclude>
+    </source>
+
+    <coverage includeUncoveredFiles="true">
+        <report>
+            <html outputDirectory="/volumes/pyrobase/tmp/event-logger-coverage"/>
+            <text outputFile="php://stdout" showOnlySummary="true"/>
+        </report>
+    </coverage>
+
+    <php>
+        <env name="LOCAL_EVENT_LOGGER_CONF" value="event-logger-test-config.php"/>
+    </php>
+</phpunit>

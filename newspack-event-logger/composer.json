@@ -1,0 +1,19 @@
+{
+	"name": "automattic/newspack-event-logger",
+	"description": "Core event logging infrastructure for WordPress request lifecycle tracking",
+	"type": "wordpress-plugin",
+	"license": "GPL-2.0-or-later",
+	"require": {
+		"php": ">=8.0"
+	},
+	"autoload": {
+		"classmap": [
+			"includes/"
+		]
+	},
+	"config": {
+		"platform": {
+			"php": "8.0"
+		}
+	}
+}
