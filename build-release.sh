@@ -73,14 +73,6 @@ for dir in "${SCRIPT_DIR}"/newspack-*/; do
 	rm -rf "${STAGING_DIR}/${plugin}"
 done
 
-# Build mu-plugin zip (single file).
-if [ -f "${SCRIPT_DIR}/00-newspack-profiler.php" ]; then
-	echo "  00-newspack-profiler.zip"
-	mkdir -p "${STAGING_DIR}/00-newspack-profiler"
-	cp "${SCRIPT_DIR}/00-newspack-profiler.php" "${STAGING_DIR}/00-newspack-profiler/"
-	(cd "${STAGING_DIR}" && zip -rq "${RELEASE_DIR}/00-newspack-profiler.zip" "00-newspack-profiler")
-fi
-
 # Clean up.
 rm -rf "${STAGING_DIR}"
 
