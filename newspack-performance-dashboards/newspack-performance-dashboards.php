@@ -53,7 +53,7 @@ if ( ! \class_exists( 'Newspack_Performance_Workers\\StatsStore' ) ) {
 }
 
 if ( ! \defined( 'NEWSPACK_PERFORMANCE_DASHBOARDS_VERSION' ) ) {
-	\define( 'NEWSPACK_PERFORMANCE_DASHBOARDS_VERSION', '2.4.9' );
+	\define( 'NEWSPACK_PERFORMANCE_DASHBOARDS_VERSION', '2.4.10' );
 }
 
 if ( ! \defined( 'PERFORMANCE_DASHBOARDS_DIR' ) ) {

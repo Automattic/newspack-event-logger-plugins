@@ -52,7 +52,7 @@ if ( ! \class_exists( 'Newspack_Performance_Workers\\Cron\\RequestBuilder' ) ) {
 }
 
 if ( ! \defined( 'PERFORMANCE_REQUEST_LOG_VERSION' ) ) {
-	\define( 'PERFORMANCE_REQUEST_LOG_VERSION', '2.4.9' );
+	\define( 'PERFORMANCE_REQUEST_LOG_VERSION', '2.4.10' );
 }
 
 if ( ! \defined( 'PERFORMANCE_REQUEST_LOG_DIR' ) ) {

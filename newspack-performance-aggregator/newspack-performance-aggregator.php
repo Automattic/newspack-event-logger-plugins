@@ -17,7 +17,7 @@
 \defined( 'ABSPATH' ) || exit;
 
 if ( ! \defined( 'NEWSPACK_PERFORMANCE_AGGREGATOR_VERSION' ) ) {
-	\define( 'NEWSPACK_PERFORMANCE_AGGREGATOR_VERSION', '2.4.9' );
+	\define( 'NEWSPACK_PERFORMANCE_AGGREGATOR_VERSION', '2.4.10' );
 }
 
 // Define the plugin directory and URL.

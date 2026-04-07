@@ -16,7 +16,7 @@
 \defined( 'ABSPATH' ) || exit;
 
 if ( ! \defined( 'NEWSPACK_EVENT_LOGGER_VERSION' ) ) {
-	\define( 'NEWSPACK_EVENT_LOGGER_VERSION', '2.4.9' );
+	\define( 'NEWSPACK_EVENT_LOGGER_VERSION', '2.4.10' );
 }
 
 // Define NEWSPACK_EVENT_LOGGER_FILE.

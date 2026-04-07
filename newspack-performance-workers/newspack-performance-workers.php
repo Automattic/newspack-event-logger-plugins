@@ -53,7 +53,7 @@ if ( ! \class_exists( 'Newspack_Performance_Logger\\LogManager' ) ) {
 }
 
 if ( ! \defined( 'NEWSPACK_PERFORMANCE_WORKERS_VERSION' ) ) {
-	\define( 'NEWSPACK_PERFORMANCE_WORKERS_VERSION', '2.4.9' );
+	\define( 'NEWSPACK_PERFORMANCE_WORKERS_VERSION', '2.4.10' );
 }
 
 if ( ! \defined( 'PERFORMANCE_WORKERS_DIR' ) ) {

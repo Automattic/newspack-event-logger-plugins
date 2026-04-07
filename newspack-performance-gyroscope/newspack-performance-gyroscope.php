@@ -53,7 +53,7 @@ if ( ! \class_exists( 'Newspack_Performance_Logger\\LogManager' ) ) {
 }
 
 if ( ! \defined( 'PERFORMANCE_GYROSCOPE_VERSION' ) ) {
-	\define( 'PERFORMANCE_GYROSCOPE_VERSION', '2.4.9' );
+	\define( 'PERFORMANCE_GYROSCOPE_VERSION', '2.4.10' );
 }
 
 if ( ! \defined( 'PERFORMANCE_GYROSCOPE_FILE' ) ) {

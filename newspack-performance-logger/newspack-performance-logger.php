@@ -39,7 +39,7 @@ if ( ! \class_exists( 'Newspack_Event_Logger\\Firehose' ) ) {
 }
 
 if ( ! \defined( 'NEWSPACK_PERFORMANCE_LOGGER_VERSION' ) ) {
-	\define( 'NEWSPACK_PERFORMANCE_LOGGER_VERSION', '2.4.9' );
+	\define( 'NEWSPACK_PERFORMANCE_LOGGER_VERSION', '2.4.10' );
 }
 
 if ( ! \defined( 'NEWSPACK_PERFORMANCE_LOGGER_FILE' ) ) {

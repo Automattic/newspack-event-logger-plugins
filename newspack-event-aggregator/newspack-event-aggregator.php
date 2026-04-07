@@ -34,7 +34,7 @@ if ( ! \class_exists( 'Newspack_Event_Logger\\Firehose' ) ) {
 }
 
 if ( ! \defined( 'NEWSPACK_EVENT_AGGREGATOR_VERSION' ) ) {
-	\define( 'NEWSPACK_EVENT_AGGREGATOR_VERSION', '2.4.9' );
+	\define( 'NEWSPACK_EVENT_AGGREGATOR_VERSION', '2.4.10' );
 }
 
 // Define the plugin directory and URL.
