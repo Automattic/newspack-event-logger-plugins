@@ -591,7 +591,8 @@ class WorkersController extends \WP_REST_Controller {
 		$total_size = $scan['total_size'];
 
 		// Get cursor position from memcache (live) or offsetlog (fallback).
-		$positions     = LogReader::get_live_positions( $type, $partition );
+		$positions     = LogReader::get_live_positions( $type, $partition )
+			?? LogReader::get_saved_positions( $type, $partition );
 		$pos           = $positions[ $input_log ] ?? null;
 		$cursor_seg    = $pos['seg'] ?? 0;
 		$cursor_offset = $pos['off'] ?? 0;

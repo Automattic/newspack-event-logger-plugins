@@ -307,8 +307,9 @@ class WorkerCommand extends WP_CLI_Command {
 					}
 				}
 
-				// Get cursor position from memcache.
-				$positions     = LogReader::get_live_positions( $group_name, $p );
+				// Get cursor position from memcache (live) or offsetlog (fallback).
+				$positions     = LogReader::get_live_positions( $group_name, $p )
+					?? LogReader::get_saved_positions( $group_name, $p );
 				$pos           = $positions[ $input_log ] ?? null;
 				$cursor_seg    = $pos['seg'] ?? 0;
 				$cursor_offset = $pos['off'] ?? 0;
