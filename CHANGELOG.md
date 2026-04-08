@@ -12,6 +12,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - JobRouter: write jobs to jobs.log immediately instead of batching until housekeeping flush, reducing job routing latency from ~15s to sub-millisecond
 - Firehose: disable PHP stream write buffering for single-writer instances (jobs.log, requests.log) so entries are visible to readers immediately
 
+### Added
+
+- Firehose: `init_current_segment()` made public for external segment state refresh
+- LogManager: `refresh_firehose()` method to re-sync segment state after subprocess execution
+
 ### Changed
 
 - Workers self-respawn on exit instead of waiting for supervisor to notice and restart them

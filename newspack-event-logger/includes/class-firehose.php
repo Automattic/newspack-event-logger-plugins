@@ -241,7 +241,7 @@ class Firehose {
 	 * Initialize current segment state from existing segments.
 	 * Does NOT create files - files are created lazily on first write.
 	 */
-	private function init_current_segment(): void {
+	public function init_current_segment(): void {
 		$this->close_handle();
 		$segments = $this->get_segments( true );
 		if ( empty( $segments ) ) {

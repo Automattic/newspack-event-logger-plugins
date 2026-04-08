@@ -438,6 +438,18 @@ class LogManager {
 	}
 
 	/**
+	 * Refresh firehose segment state from disk.
+	 *
+	 * Call after a subprocess that may have written to or rotated the firehose,
+	 * so subsequent writes go to the current segment.
+	 */
+	public function refresh_firehose(): void {
+		if ( null !== $this->firehose ) {
+			$this->firehose->init_current_segment();
+		}
+	}
+
+	/**
 	 * Flush buffered writes to firehose (atomic <=4KB write).
 	 */
 	public function flush_buffer(): void {
