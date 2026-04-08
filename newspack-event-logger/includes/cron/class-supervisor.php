@@ -40,11 +40,6 @@ class Supervisor extends SupervisorBase {
 	private const MIN_SPAWN_INTERVAL_S = 15;
 
 	/**
-	 * Seconds between caught-up checks per worker.
-	 */
-	private const CATCHUP_CHECK_INTERVAL = 15;
-
-	/**
 	 * Grace period (seconds) before removing stale partition directories.
 	 */
 	private const STALE_PARTITION_AGE_S = 3600;
@@ -90,20 +85,6 @@ class Supervisor extends SupervisorBase {
 	 * @var array<string, array>
 	 */
 	private array $standalone_workers = [];
-
-	/**
-	 * Cached caught-up results keyed by type|partition.
-	 *
-	 * @var array<string, bool>
-	 */
-	private array $caught_up_cache = [];
-
-	/**
-	 * Last caught-up check timestamps keyed by type|partition.
-	 *
-	 * @var array<string, int>
-	 */
-	private array $last_catchup_check = [];
 
 	/**
 	 * Maximum supervisor runtime in seconds (10 minutes minus 5 seconds).
@@ -438,78 +419,6 @@ class Supervisor extends SupervisorBase {
 	}
 
 	/**
-	 * Check if a log reader worker has pending work.
-	 *
-	 * Two checks:
-	 * 1. Input partition directory must exist (input log has data for this partition).
-	 * 2. Worker cursor must not be at or past the end of the newest segment for ALL inputs.
-	 *
-	 * The caught-up check is rate-limited to every CATCHUP_CHECK_INTERVAL seconds per worker.
-	 *
-	 * @param array $worker Worker info array.
-	 * @param int   $now    Current timestamp.
-	 * @return bool True if the worker has work to do.
-	 */
-	private function worker_has_work( array $worker, int $now ): bool {
-		$type      = $worker['type'];
-		$partition = $worker['partition'];
-		$logs_dir  = Config::get_logs_directory();
-
-		$reader_config = $this->log_readers[ $type ] ?? null;
-		if ( null === $reader_config || empty( $reader_config['inputs'] ) ) {
-			return true; // Unknown reader type, assume has work.
-		}
-
-		// Check 1: At least one input partition directory must exist.
-		$any_input_exists = false;
-		foreach ( $reader_config['inputs'] as $input ) {
-			if ( \is_dir( "{$logs_dir}/{$input}/p{$partition}" ) ) {
-				$any_input_exists = true;
-				break;
-			}
-		}
-		if ( ! $any_input_exists ) {
-			return false;
-		}
-
-		// Check 2: Caught-up check (rate-limited).
-		$worker_key  = "{$type}|{$partition}";
-		$last_check  = $this->last_catchup_check[ $worker_key ] ?? 0;
-		if ( $now - $last_check < self::CATCHUP_CHECK_INTERVAL ) {
-			// Use cached result; default false (assume has work).
-			return ! ( $this->caught_up_cache[ $worker_key ] ?? false );
-		}
-		$this->last_catchup_check[ $worker_key ] = $now;
-
-		$all_caught_up = true;
-
-		// Read saved positions from unified offsetlog.
-		$positions = LogReader::get_saved_positions( $type, $partition );
-
-		foreach ( $reader_config['inputs'] as $input ) {
-			$firehose = new Firehose( "{$logs_dir}/{$input}", $partition );
-			$segments = $firehose->get_segments();
-
-			if ( empty( $segments ) ) {
-				// No segments means no data yet - caught up on this input.
-				continue;
-			}
-
-			$newest        = \end( $segments );
-			$cursor_seg    = $positions[ $input ]['seg'] ?? 0;
-			$cursor_offset = $positions[ $input ]['off'] ?? 0;
-
-			if ( $cursor_seg < $newest['id'] || ( $cursor_seg === $newest['id'] && $cursor_offset < $newest['size'] ) ) {
-				$all_caught_up = false;
-				break;
-			}
-		}
-
-		$this->caught_up_cache[ $worker_key ] = $all_caught_up;
-		return ! $all_caught_up;
-	}
-
-	/**
 	 * Run the supervisor loop.
 	 */
 	public function run(): void {
@@ -572,11 +481,6 @@ class Supervisor extends SupervisorBase {
 			// Check each worker and spawn if needed.
 			foreach ( $this->worker_locks as $worker ) {
 				if ( $this->worker_needs_spawn( $worker, $now ) ) {
-					// For log readers, check if there's actually work to do.
-					if ( empty( $worker['standalone'] ) && ! $this->worker_has_work( $worker, $now ) ) {
-						continue;
-					}
-
 					// Rate limit: skip if spawned too recently.
 					// Use pipe delimiter to avoid collision if type ever contains colon.
 					$worker_key = $worker['type'] . '|' . $worker['partition'];

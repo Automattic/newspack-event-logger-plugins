@@ -77,6 +77,7 @@ abstract class WorkerBase {
 		} finally {
 			$shutdown_handled = true;
 			$this->release();
+			$this->self_respawn();
 		}
 	}
 
@@ -225,6 +226,27 @@ abstract class WorkerBase {
 		}
 
 		return false;
+	}
+
+	/**
+	 * Spawn the next instance of this worker via the spawn endpoint.
+	 */
+	protected function self_respawn(): void {
+		$type = \sanitize_text_field( $_SERVER['EVENT_LOGGER_WORKER_TYPE'] ?? '' );
+		if ( '' === $type || 'supervisor' === $type ) {
+			return;
+		}
+
+		\wp_remote_post( \rest_url( 'event-logger/v1/workers/spawn' ), [
+			'blocking'  => false,
+			'timeout'   => 0.01,
+			'sslverify' => false,
+			'body'      => [
+				'type'      => $type,
+				'partition' => $this->partition,
+				'nonce'     => \Newspack_Event_Logger\Cron\Supervisor::generate_spawn_token(),
+			],
+		] );
 	}
 
 	/**
