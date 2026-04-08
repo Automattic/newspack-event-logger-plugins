@@ -25,7 +25,7 @@ return [
 	// - Deleted/recreated users with the same username regain access.
 	// - Renamed users lose access (update this list after username changes).
 	// - For stronger authorization, consider switching to user IDs in future.
-	'allowed_users'          => [ 'admin', 'adminnewspack', 'dispatch' ],
+	'allowed_users'          => [ 'adminnewspack', 'dispatch' ],
 
 	// Enable/disable logging.
 	'enable_logging'         => true,
