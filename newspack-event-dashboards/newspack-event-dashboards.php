@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Newspack Event Dashboards
  * Description: Workers and Raw Logs dashboards for Event Logger.
- * Version: 2.4.10
+ * Version: 2.4.11
  * Author: Automattic
  * Author URI: https://newspack.com/
  * License: GPL-2.0-or-later
@@ -35,7 +35,7 @@ if ( ! \class_exists( 'Newspack_Event_Logger\\Firehose' ) ) {
 }
 
 if ( ! \defined( 'NEWSPACK_EVENT_LOGGER_DASHBOARDS_VERSION' ) ) {
-	\define( 'NEWSPACK_EVENT_LOGGER_DASHBOARDS_VERSION', '2.4.10' );
+	\define( 'NEWSPACK_EVENT_LOGGER_DASHBOARDS_VERSION', '2.4.11' );
 }
 
 if ( ! \defined( 'EVENT_LOGGER_DASHBOARDS_DIR' ) ) {
