@@ -78,6 +78,7 @@ class Config {
 		// Event Logger's own core options.
 		$schema = [
 			'enable_logging' => 'bool',
+			'enable_jobs'    => 'bool',
 			'base_directory' => 'path',
 			'num_partitions' => 'int',
 			'num_segments'   => 'int',

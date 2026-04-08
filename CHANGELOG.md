@@ -7,9 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2.4.12] - 2026-04-08
 
+### Added
+
+- `enable_jobs` config option and admin checkbox to disable JobIntake and JobWorker without deactivating the event-jobs plugin
+
 ### Fixed
 
 - CategoryTimeChart: re-render on window resize and data updates, matching AggregateTimeChart's useCallback/useEffect pattern
+- RequestBuilder: subtract child time from callback profiles and their parent hooks for accurate self-time
 - build-release.sh: include mu-plugin files (00-*.php) in release artifacts
 
 ## [2.4.11] - 2026-04-07

@@ -58,6 +58,7 @@ return [
 	'aggregator_verify_ssl'  => true,  // Verify SSL certificates (set false for self-signed certs).
 	'aggregator_allow_http'  => false, // Allow plain HTTP connections (default: false, HTTPS only).
 	'enable_workers'         => true,
+	'enable_jobs'            => true,
 
 	// URL filtering (substring matching, not regex).
 	// Priority: skip_urls is checked FIRST and always wins.

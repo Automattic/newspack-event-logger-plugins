@@ -101,6 +101,7 @@ class Admin {
 		// Options handled by supervisor (it refreshes config each loop).
 		$supervisor_only_options = [
 			'event_logger_enable_logging',
+			'event_logger_enable_jobs',
 			'event_logger_num_partitions',
 		];
 		if ( \in_array( $option, $supervisor_only_options, true ) ) {
@@ -246,6 +247,7 @@ class Admin {
 	public function register_settings() {
 		// Register core options.
 		\register_setting( 'event_logger_options_group', 'event_logger_enable_logging', [ 'sanitize_callback' => 'absint' ] );
+		\register_setting( 'event_logger_options_group', 'event_logger_enable_jobs', [ 'sanitize_callback' => 'absint' ] );
 		\register_setting( 'event_logger_options_group', 'event_logger_base_directory', [ 'sanitize_callback' => function( $value ) {
 			$value = \sanitize_text_field( $value );
 			if ( \str_contains( $value, "\0" ) || \str_contains( $value, '..' ) ) {
@@ -265,6 +267,7 @@ class Admin {
 		// General section.
 		\add_settings_section( 'event_logger_general_section', \__( 'General', 'newspack-event-logger' ), [ $this, 'general_section_callback' ], 'event_logger' );
 		\add_settings_field( 'enable_logging', \__( 'Enable Logging', 'newspack-event-logger' ), [ $this, 'enable_logging_callback' ], 'event_logger', 'event_logger_general_section' );
+		\add_settings_field( 'enable_jobs', \__( 'Enable Jobs', 'newspack-event-logger' ), [ $this, 'enable_jobs_callback' ], 'event_logger', 'event_logger_general_section' );
 
 		// Storage section.
 		\add_settings_section( 'event_logger_storage_section', \__( 'Storage Settings', 'newspack-event-logger' ), [ $this, 'storage_section_callback' ], 'event_logger' );
@@ -353,6 +356,16 @@ class Admin {
 		<input type="hidden" name="event_logger_enable_logging" value="0" />
 		<input type="checkbox" id="enable_logging" name="event_logger_enable_logging" value="1" <?php checked( 1, $enabled ); ?> />
 		<label for="enable_logging"><?php \esc_html_e( 'Enable event logging', 'newspack-event-logger' ); ?></label>
+		<?php
+	}
+
+	public function enable_jobs_callback() {
+		$config  = Config::load_config();
+		$enabled = \get_option( 'event_logger_enable_jobs', $config['enable_jobs'] ?? 1 );
+		?>
+		<input type="hidden" name="event_logger_enable_jobs" value="0" />
+		<input type="checkbox" id="enable_jobs" name="event_logger_enable_jobs" value="1" <?php checked( 1, $enabled ); ?> />
+		<label for="enable_jobs"><?php \esc_html_e( 'Enable JobIntake and JobWorker', 'newspack-event-logger' ); ?></label>
 		<?php
 	}
 

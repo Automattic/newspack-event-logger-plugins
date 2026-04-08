@@ -49,37 +49,43 @@ if ( ! \defined( 'EVENT_LOGGER_JOBS_URL' ) ) {
 // Composer autoloader.
 require_once __DIR__ . '/vendor/autoload.php';
 
-// Register log count for storage calculation (jobs.log, jobintake.log).
-\add_filter( 'newspack_event_logger_num_logs', fn( $n ) => $n + 2 );
+// Check if jobs are enabled (config file overrides WP option).
+$el_jobs_config = Newspack_Event_Logger\Config::load_config();
+$el_jobs_enabled = $el_jobs_config['enable_jobs'] ?? true;
 
-// Register log readers for Jobs plugin (two-level group format).
-\add_filter( 'newspack_event_logger_log_readers', function( $readers ) {
-	// JobRouter inputs: always jobintake.log, plus firehose.log if Performance is active.
-	$job_router_inputs = [ 'jobintake.log' ];
-	if ( \class_exists( 'Newspack_Performance_Logger\\LogManager' ) ) {
-		$job_router_inputs[] = 'firehose.log';
-	}
+if ( $el_jobs_enabled ) {
+	// Register log count for storage calculation (jobs.log, jobintake.log).
+	\add_filter( 'newspack_event_logger_num_logs', fn( $n ) => $n + 2 );
 
-	// JobRouter: routes job entries to jobs.log.
-	// When Performance is active, shares firehose-workers group with RequestBuilder.
-	// When Performance is inactive, runs in its own jobintake-workers group.
-	$group = \class_exists( 'Newspack_Performance_Logger\\LogManager' ) ? 'firehose-workers' : 'jobintake-workers';
-	$readers[ $group ]['job-router'] = [
-		'class'  => Newspack_Event_Jobs\Cron\JobRouter::class,
-		'inputs' => $job_router_inputs,
-		'outputs' => [ 'jobs.log' ],
-	];
+	// Register log readers for Jobs plugin (two-level group format).
+	\add_filter( 'newspack_event_logger_log_readers', function( $readers ) {
+		// JobRouter inputs: always jobintake.log, plus firehose.log if Performance is active.
+		$job_router_inputs = [ 'jobintake.log' ];
+		if ( \class_exists( 'Newspack_Performance_Logger\\LogManager' ) ) {
+			$job_router_inputs[] = 'firehose.log';
+		}
 
-	// JobWorker: jobs.log → dispatches to registered handlers.
-	// Long stale timeout because job handlers (e.g. imports) can block for minutes.
-	$readers['job-workers']['job-worker'] = [
-		'class'         => Newspack_Event_Jobs\Cron\JobWorker::class,
-		'inputs'        => [ 'jobs.log' ],
-		'outputs'       => [ 'firehose.log' ],
-		'stale_timeout' => 600,
-	];
-	return $readers;
-} );
+		// JobRouter: routes job entries to jobs.log.
+		// When Performance is active, shares firehose-workers group with RequestBuilder.
+		// When Performance is inactive, runs in its own jobintake-workers group.
+		$group = \class_exists( 'Newspack_Performance_Logger\\LogManager' ) ? 'firehose-workers' : 'jobintake-workers';
+		$readers[ $group ]['job-router'] = [
+			'class'  => Newspack_Event_Jobs\Cron\JobRouter::class,
+			'inputs' => $job_router_inputs,
+			'outputs' => [ 'jobs.log' ],
+		];
+
+		// JobWorker: jobs.log → dispatches to registered handlers.
+		// Long stale timeout because job handlers (e.g. imports) can block for minutes.
+		$readers['job-workers']['job-worker'] = [
+			'class'         => Newspack_Event_Jobs\Cron\JobWorker::class,
+			'inputs'        => [ 'jobs.log' ],
+			'outputs'       => [ 'firehose.log' ],
+			'stale_timeout' => 600,
+		];
+		return $readers;
+	} );
+}
 
 // Supervisor hooks for plugin activation/deactivation.
 \register_activation_hook( __FILE__, [ Newspack_Event_Logger\Cron\Supervisor::class, 'request_restart' ] );
