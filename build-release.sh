@@ -73,9 +73,17 @@ for dir in "${SCRIPT_DIR}"/newspack-*/; do
 	rm -rf "${STAGING_DIR}/${plugin}"
 done
 
+# Copy standalone files (mu-plugins, etc.) that aren't zipped.
+echo "=== Copying standalone files ==="
+for f in "${SCRIPT_DIR}"/00-*.php; do
+	[ -f "$f" ] || continue
+	cp "$f" "${RELEASE_DIR}/"
+	echo "  $(basename "$f")"
+done
+
 # Clean up.
 rm -rf "${STAGING_DIR}"
 
 echo ""
-echo "=== Release zips ==="
-ls -lh "${RELEASE_DIR}"/*.zip
+echo "=== Release artifacts ==="
+ls -lh "${RELEASE_DIR}"/*
