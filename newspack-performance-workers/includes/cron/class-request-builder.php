@@ -378,25 +378,30 @@ class RequestBuilder {
 			}
 		}
 
-		// Subtract child time from parent to avoid double-counting — but NOT for
-		// per-callback profiling entries (contain " @N "), which are breakdowns
-		// of the parent hook's time, not independent children.
-		// When the immediate parent IS a callback, walk up the stack to find the
-		// nearest non-callback ancestor (the real hook) and subtract from that.
+		// Subtract child time from ancestors to avoid double-counting.
+		// Callbacks (contain " @N") are breakdowns of their parent hook's time,
+		// so callback completion does NOT subtract from the hook.
+		// Non-callback children subtract from BOTH the callback (if inside one)
+		// AND the callback's parent hook.
 		if ( ! empty( $request['stack'] ) && ! \preg_match( '/ @\d+$/', $state ) ) {
 			for ( $j = \count( $request['stack'] ) - 1; $j >= 0; $j-- ) {
 				$ancestor = $request['stack'][ $j ];
 				if ( 'process' === $ancestor ) {
 					break;
 				}
-				if ( ! \preg_match( '/ @\d+$/', $ancestor ) && isset( $request['profiles'][ $ancestor ] ) ) {
+				if ( isset( $request['profiles'][ $ancestor ] ) ) {
 					$request['profiles'][ $ancestor ]['time'] -= $time;
 
 					$ancestor_what = $request['what_stack'][ $j ] ?? '';
 					if ( $ancestor_what && isset( $request['profiles'][ $ancestor ]['entries'][ $ancestor_what ] ) ) {
 						$request['profiles'][ $ancestor ]['entries'][ $ancestor_what ][0] -= $time;
 					}
-					break;
+					// If we just subtracted from a callback, continue to also
+					// subtract from its parent hook. Stop after the first
+					// non-callback ancestor.
+					if ( ! \preg_match( '/ @\d+$/', $ancestor ) ) {
+						break;
+					}
 				}
 			}
 		}
