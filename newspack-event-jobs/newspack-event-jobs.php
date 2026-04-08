@@ -49,16 +49,17 @@ if ( ! \defined( 'EVENT_LOGGER_JOBS_URL' ) ) {
 // Composer autoloader.
 require_once __DIR__ . '/vendor/autoload.php';
 
-// Check if jobs are enabled (config file overrides WP option).
-$el_jobs_config = Newspack_Event_Logger\Config::load_config();
-$el_jobs_enabled = $el_jobs_config['enable_jobs'] ?? true;
+// Register log count for storage calculation (jobs.log, jobintake.log).
+\add_filter( 'newspack_event_logger_num_logs', fn( $n ) => $n + 2 );
 
-if ( $el_jobs_enabled ) {
-	// Register log count for storage calculation (jobs.log, jobintake.log).
-	\add_filter( 'newspack_event_logger_num_logs', fn( $n ) => $n + 2 );
-
-	// Register log readers for Jobs plugin (two-level group format).
-	\add_filter( 'newspack_event_logger_log_readers', function( $readers ) {
+// Register log readers for Jobs plugin (two-level group format).
+// Gated by enable_jobs config — checked lazily to avoid caching Config
+// before other plugins register their schema options.
+\add_filter( 'newspack_event_logger_log_readers', function( $readers ) {
+	$config = Newspack_Event_Logger\Config::load_config();
+	if ( ! ( $config['enable_jobs'] ?? true ) ) {
+		return $readers;
+	}
 		// JobRouter inputs: always jobintake.log, plus firehose.log if Performance is active.
 		$job_router_inputs = [ 'jobintake.log' ];
 		if ( \class_exists( 'Newspack_Performance_Logger\\LogManager' ) ) {
@@ -85,7 +86,6 @@ if ( $el_jobs_enabled ) {
 		];
 		return $readers;
 	} );
-}
 
 // Admin settings (adds Jobs section to Event Logger settings page).
 if ( \is_admin() ) {
