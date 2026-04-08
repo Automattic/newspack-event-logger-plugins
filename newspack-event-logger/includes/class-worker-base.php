@@ -233,7 +233,7 @@ abstract class WorkerBase {
 	 */
 	protected function self_respawn(): void {
 		$type = \sanitize_text_field( $_SERVER['EVENT_LOGGER_WORKER_TYPE'] ?? '' );
-		if ( '' === $type || 'supervisor' === $type ) {
+		if ( '' === $type ) {
 			return;
 		}
 
