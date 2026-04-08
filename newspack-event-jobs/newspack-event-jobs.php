@@ -87,6 +87,11 @@ if ( $el_jobs_enabled ) {
 	} );
 }
 
+// Admin settings (adds Jobs section to Event Logger settings page).
+if ( \is_admin() ) {
+	new Newspack_Event_Jobs\Admin\Admin();
+}
+
 // Supervisor hooks for plugin activation/deactivation.
 \register_activation_hook( __FILE__, [ Newspack_Event_Logger\Cron\Supervisor::class, 'request_restart' ] );
 \register_deactivation_hook( __FILE__, function() {
