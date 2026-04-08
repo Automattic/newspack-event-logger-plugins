@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- JobRouter: write jobs to jobs.log immediately instead of batching until housekeeping flush, reducing job routing latency from ~15s to sub-millisecond
+
 ## [2.4.10] - 2026-04-05
 
 ### Security

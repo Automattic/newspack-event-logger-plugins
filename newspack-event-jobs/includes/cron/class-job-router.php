@@ -60,8 +60,6 @@ class JobRouter {
 		$context['jobs_log'] = ( new Firehose( "{$log_base}/jobs.log", $partition ) )
 			->allow_large_writes();
 
-		// Queue for batching writes.
-		$context['queue'] = [];
 	}
 
 	/**
@@ -111,7 +109,7 @@ class JobRouter {
 
 		$validated = self::validate_job( $entry['k'], $message );
 		if ( null !== $validated ) {
-			$context['queue'][] = $validated;
+			$context['jobs_log']->write( \wp_json_encode( $validated ) );
 		}
 	}
 
@@ -179,25 +177,16 @@ class JobRouter {
 	 * @return array State array for persistence.
 	 */
 	public static function save_state( array &$context ): array {
-		// No persistent state needed - jobs are written immediately.
+		// No persistent state needed.
 		return [];
 	}
 
 	/**
-	 * Flush queued jobs to output.
+	 * Flush handler — nothing to flush, jobs are written immediately.
 	 *
 	 * @param array $context Handler context.
 	 */
 	public static function flush( array &$context ): void {
-		$jobs_log = $context['jobs_log'] ?? null;
-		if ( ! $jobs_log ) {
-			return;
-		}
-
-		foreach ( $context['queue'] as $job ) {
-			$jobs_log->write( \wp_json_encode( $job ) );
-		}
-		$context['queue'] = [];
 	}
 
 	/**
@@ -206,7 +195,6 @@ class JobRouter {
 	 * @param array $context Handler context.
 	 */
 	public static function cleanup( array &$context ): void {
-		self::flush( $context );
 		$context['jobs_log'] = null;
 	}
 }
