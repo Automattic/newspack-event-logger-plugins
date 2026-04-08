@@ -157,6 +157,13 @@ class Firehose {
 			$this->fh = @\fopen( $this->current_log_path, 'a' );
 			if ( $this->fh ) {
 				$this->fh_segment_id = $this->current_segment_id;
+				// Single-writer firehoses (jobs.log, requests.log) keep handles open
+				// for the process lifetime. Disable write buffering so downstream
+				// readers see new entries immediately instead of waiting for the
+				// 8KB PHP stream buffer to fill.
+				if ( $this->skip_rotation_lock ) {
+					\stream_set_write_buffer( $this->fh, 0 );
+				}
 				// Open index handle alongside log handle.
 				if ( null !== $this->index_callback ) {
 					// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fopen
