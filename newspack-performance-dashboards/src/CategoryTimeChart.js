@@ -6,7 +6,7 @@
  * Two modes: "time" (seconds per second) and "count" (events per second).
  */
 
-import { useEffect, useRef, useMemo } from '@wordpress/element';
+import { useCallback, useEffect, useRef, useMemo } from '@wordpress/element';
 import * as d3 from 'd3';
 
 const PALETTE = [
@@ -112,7 +112,7 @@ export default function CategoryTimeChart( { data, mode, title } ) {
 		);
 	}, [ data, mode ] );
 
-	useEffect( () => {
+	const renderChart = useCallback( () => {
 		if ( ! data || ! containerRef.current || categories.length === 0 ) {
 			return;
 		}
@@ -352,17 +352,41 @@ export default function CategoryTimeChart( { data, mode, title } ) {
 				.style( 'font-size', '11px' )
 				.style( 'fill', '#888' );
 		} );
+	}, [ data, mode, categories ] );
 
-		// Hide on scroll — chart moves away from cursor without mouseleave.
+	// Initial render and data change.
+	useEffect( () => {
+		renderChart();
+	}, [ renderChart ] );
+
+	// Handle resize.
+	useEffect( () => {
+		const handleResize = () => renderChart();
+		window.addEventListener( 'resize', handleResize );
+		return () => window.removeEventListener( 'resize', handleResize );
+	}, [ renderChart ] );
+
+	// Hide tooltip on scroll — chart moves away from cursor without mouseleave.
+	useEffect( () => {
+		const el = containerRef.current;
+		if ( ! el ) {
+			return;
+		}
 		const scrollParent =
-			container.closest( '.components-modal__content' ) || window;
-		scrollParent.addEventListener( 'scroll', hideTooltip, {
+			el.closest( '.components-modal__content' ) || window;
+		const hideOnScroll = () => {
+			lastMouseXRef.current = null;
+			if ( tooltipRef.current ) {
+				tooltipRef.current.style.display = 'none';
+			}
+		};
+		scrollParent.addEventListener( 'scroll', hideOnScroll, {
 			passive: true,
 		} );
 		return () => {
-			scrollParent.removeEventListener( 'scroll', hideTooltip );
+			scrollParent.removeEventListener( 'scroll', hideOnScroll );
 		};
-	}, [ data, mode, categories ] );
+	}, [] );
 
 	if ( ! data || Object.keys( data ).length === 0 ) {
 		return null;
