@@ -66,6 +66,7 @@ return [
 	'skip_urls'              => [
 		// Never log URLs containing these substrings.
 		'/wp-json/event-logger/v1/firehose',
+		'/wp-json/event-logger/v1/workers/spawn',
 	],
 
 	// Custom event colors for flame graphs/profiles.
