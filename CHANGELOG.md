@@ -5,14 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.4.12] - 2026-04-08
+## [2.4.13] - 2026-04-08
 
 ### Added
 
-- `enable_jobs` config option and admin checkbox to disable JobIntake and JobWorker without deactivating the event-jobs plugin
+- `enable_jobs` config option with admin checkbox in Jobs section (event-jobs plugin)
+- `enable_workers` admin checkbox in Performance Workers section (performance-workers plugin)
+- Each checkbox only appears when its plugin is active
 
 ### Fixed
 
+- Config: defer `enable_jobs` check to avoid caching Config before other plugins register schema options (broke hook timing)
+- Config: moved `enable_workers` from extended to core option schema so WP option overrides take effect
 - CategoryTimeChart: re-render on window resize and data updates, matching AggregateTimeChart's useCallback/useEffect pattern
 - RequestBuilder: subtract child time from callback profiles and their parent hooks for accurate self-time
 - build-release.sh: include mu-plugin files (00-*.php) in release artifacts
