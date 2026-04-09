@@ -261,7 +261,9 @@ export default function PerformanceDashboard( { onError } ) {
 	useEffect( () => {
 		const loadData = async () => {
 			const [ overviewData, urlsResult ] = await Promise.all( [
-				apiRef.current.fetchOverview( serverFilterRef.current ),
+				apiRef.current.fetchOverview( serverFilterRef.current, {
+					categories: true,
+				} ),
 				apiRef.current.fetchUrls( {
 					...urlParamsRef.current,
 					server: serverFilterRef.current,
@@ -269,16 +271,13 @@ export default function PerformanceDashboard( { onError } ) {
 			] );
 			if ( overviewData ) {
 				setOverview( overviewData );
+				if ( overviewData.category_time_series ) {
+					setCategoryData( overviewData.category_time_series );
+				}
 			}
 			if ( urlsResult ) {
 				setUrls( urlsResult.data );
 				setTotalUrls( urlsResult.total );
-			}
-			const catData = await apiRef.current.fetchCategories(
-				serverFilterRef.current
-			);
-			if ( catData ) {
-				setCategoryData( catData );
 			}
 			setLoading( false );
 		};
@@ -293,7 +292,9 @@ export default function PerformanceDashboard( { onError } ) {
 		}
 		( async () => {
 			const [ overviewData, result ] = await Promise.all( [
-				apiRef.current.fetchOverview( serverFilter ),
+				apiRef.current.fetchOverview( serverFilter, {
+					categories: true,
+				} ),
 				apiRef.current.fetchUrls( {
 					...urlParamsRef.current,
 					server: serverFilter,
@@ -301,15 +302,13 @@ export default function PerformanceDashboard( { onError } ) {
 			] );
 			if ( overviewData ) {
 				setOverview( overviewData );
+				if ( overviewData.category_time_series ) {
+					setCategoryData( overviewData.category_time_series );
+				}
 			}
 			if ( result ) {
 				setUrls( result.data );
 				setTotalUrls( result.total );
-			}
-			const catData =
-				await apiRef.current.fetchCategories( serverFilter );
-			if ( catData ) {
-				setCategoryData( catData );
 			}
 		} )();
 	}, [ serverFilter ] ); // eslint-disable-line react-hooks/exhaustive-deps -- refs are stable.
@@ -326,7 +325,9 @@ export default function PerformanceDashboard( { onError } ) {
 			lastRefreshRef.current = Date.now();
 			const [ overviewData, urlsResult, serverData ] = await Promise.all(
 				[
-					apiRef.current.fetchOverview( serverFilterRef.current ),
+					apiRef.current.fetchOverview( serverFilterRef.current, {
+						categories: true,
+					} ),
 					apiRef.current.fetchUrls( {
 						...urlParamsRef.current,
 						server: serverFilterRef.current,
@@ -336,6 +337,9 @@ export default function PerformanceDashboard( { onError } ) {
 			);
 			if ( overviewData ) {
 				setOverview( overviewData );
+				if ( overviewData.category_time_series ) {
+					setCategoryData( overviewData.category_time_series );
+				}
 			}
 			if ( urlsResult ) {
 				setUrls( urlsResult.data );
@@ -343,12 +347,6 @@ export default function PerformanceDashboard( { onError } ) {
 			}
 			if ( serverData ) {
 				setServerBreakdownData( serverData );
-			}
-			const catData = await apiRef.current.fetchCategories(
-				serverFilterRef.current
-			);
-			if ( catData ) {
-				setCategoryData( catData );
 			}
 		};
 

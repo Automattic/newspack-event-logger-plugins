@@ -44,15 +44,24 @@ const usePerformanceApi = ( onError ) => {
 	/**
 	 * Fetch performance overview data.
 	 *
-	 * @param {string} server Optional server name for per-server leaderboard.
+	 * @param {string}  server             Optional server name for per-server leaderboard.
+	 * @param {Object}  options            Optional request options.
+	 * @param {boolean} options.categories Include category_time_series in response.
 	 * @return {Promise<Object|null>} Overview data or null on error.
 	 */
 	const fetchOverview = useCallback(
-		async ( server = '' ) => {
+		async ( server = '', { categories = false } = {} ) => {
 			try {
-				let path = '/event-logger/v1/performance/overview';
+				const params = [];
 				if ( server ) {
-					path += `?server=${ encodeURIComponent( server ) }`;
+					params.push( `server=${ encodeURIComponent( server ) }` );
+				}
+				if ( categories ) {
+					params.push( 'categories=1' );
+				}
+				let path = '/event-logger/v1/performance/overview';
+				if ( params.length ) {
+					path += '?' + params.join( '&' );
 				}
 				const data = await apiFetch( { path } );
 				return data;

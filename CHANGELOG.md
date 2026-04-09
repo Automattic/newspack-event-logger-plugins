@@ -9,8 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Performance Dashboard: refresh all charts (including category charts) immediately when tab becomes visible instead of waiting for next interval tick
-- Skip immediate refresh if last fetch was within the refresh interval to avoid redundant API calls
+- Performance Dashboard: category charts now update with the aggregate chart — overview and categories are fetched in a single API call instead of separate requests that could be cached/dropped
+- Auto-refresh fetches immediately when tab becomes visible (skips if last refresh was within the interval)
 
 ## [2.4.14] - 2026-04-08
 

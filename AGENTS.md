@@ -46,7 +46,19 @@ npm run fix:scss
 npm run fix:php
 
 # Version bump (from dndocker root)
-dndocker/tools/bump_version.sh
+dndocker/tools/bump-event-logger-version.sh <version>
+
+# Release workflow
+# 1. Update CHANGELOG.md with new version and changes
+# 2. Bump version across all plugin headers + package.json:
+dndocker/tools/bump-event-logger-version.sh <version>
+# 3. Commit the fix + version bump
+# 4. Build release artifacts:
+./build-release.sh          # outputs to release/
+# 5. Tag, push, and create GitHub release with zips:
+git tag v<version>
+git push origin trunk --tags
+gh release create v<version> release/*.zip release/00-newspack-profiler.php --title "v<version>" --notes "changelog here"
 ```
 
 ## Testing
