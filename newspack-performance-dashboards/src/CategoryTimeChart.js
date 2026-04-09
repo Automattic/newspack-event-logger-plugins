@@ -1,63 +1,22 @@
-/* global requestAnimationFrame, cancelAnimationFrame */
 /**
  * Category Time Chart Component
  *
  * D3-based overlaid area chart showing profile category breakdowns over time.
- * Two modes: "time" (seconds per second) and "count" (events per second).
+ * Three modes: "time" (seconds per second), "count" (events per second), "average" (ms per event).
  */
 
-import { useCallback, useEffect, useRef, useMemo } from '@wordpress/element';
+import { useMemo } from '@wordpress/element';
 import * as d3 from 'd3';
-
-const PALETTE = [
-	'#4e79a7',
-	'#f28e2b',
-	'#e15759',
-	'#76b7b2',
-	'#59a14f',
-	'#edc948',
-	'#b07aa1',
-	'#ff9da7',
-	'#9c755f',
-	'#bab0ac',
-	'#6b46c1',
-	'#2ca02c',
-	'#d62728',
-	'#1f77b4',
-	'#ff7f0e',
-	'#8c564b',
-	'#7f7f7f',
-	'#bcbd22',
-	'#17becf',
-	'#aec7e8',
-];
-
-const RETENTION_SECONDS =
-	Number( window.eventLoggerDashboards?.retentionSeconds ) || 86400;
-const BUCKET_MINUTES = 5;
-const BUCKET_SECONDS = BUCKET_MINUTES * 60;
-const BUCKET_MS = BUCKET_SECONDS * 1000;
-const NUM_BUCKETS = Math.ceil( RETENTION_SECONDS / BUCKET_SECONDS );
-
-const MARGIN = { top: 10, right: 160, bottom: 65, left: 60 };
-
-const buildTimeSlots = () => {
-	const now = new Date();
-	const slots = [];
-	for ( let i = NUM_BUCKETS - 1; i >= 0; i-- ) {
-		const date = new Date( now.getTime() - i * BUCKET_MS );
-		date.setMinutes( Math.floor( date.getMinutes() / 5 ) * 5, 0, 0 );
-		const bucketKey = [
-			date.getUTCFullYear(),
-			String( date.getUTCMonth() + 1 ).padStart( 2, '0' ),
-			String( date.getUTCDate() ).padStart( 2, '0' ),
-			String( date.getUTCHours() ).padStart( 2, '0' ),
-			String( date.getUTCMinutes() ).padStart( 2, '0' ),
-		].join( '-' );
-		slots.push( { date, bucketKey } );
-	}
-	return slots;
-};
+import {
+	BUCKET_SECONDS,
+	MARGIN,
+	PALETTE,
+	buildTimeSlots,
+	drawLegend,
+	formatXTick,
+	setupTooltip,
+	useTimeChart,
+} from './shared/hooks/useTimeChart';
 
 const formatYValue = ( val, mode ) => {
 	if ( val === 0 ) {
@@ -88,10 +47,6 @@ const formatYValue = ( val, mode ) => {
 };
 
 export default function CategoryTimeChart( { data, mode, title } ) {
-	const containerRef = useRef( null );
-	const tooltipRef = useRef( null );
-	const lastMouseXRef = useRef( null );
-
 	// Pre-compute chart data.
 	const chartState = useMemo( () => {
 		if ( ! data ) {
@@ -137,263 +92,129 @@ export default function CategoryTimeChart( { data, mode, title } ) {
 		return { series, slots };
 	}, [ data, mode ] );
 
-	const renderChart = useCallback( () => {
-		if ( ! containerRef.current || chartState.series.length === 0 ) {
-			return;
-		}
+	const { containerRef, tooltipRef } = useTimeChart(
+		( refs ) => {
+			if (
+				! refs.containerRef.current ||
+				chartState.series.length === 0
+			) {
+				return;
+			}
 
-		const { series, slots } = chartState;
+			const { series, slots } = chartState;
 
-		// Clear previous chart.
-		d3.select( containerRef.current ).selectAll( '*' ).remove();
+			// Clear previous chart.
+			d3.select( refs.containerRef.current ).selectAll( '*' ).remove();
 
-		// Dimensions.
-		const width = containerRef.current.clientWidth || 800;
-		const height = 200;
-		const innerW = width - MARGIN.left - MARGIN.right;
-		const innerH = height - MARGIN.top - MARGIN.bottom;
+			// Dimensions.
+			const width = refs.containerRef.current.clientWidth || 800;
+			const height = 200;
+			const innerW = width - MARGIN.left - MARGIN.right;
+			const innerH = height - MARGIN.top - MARGIN.bottom;
 
-		const svg = d3
-			.select( containerRef.current )
-			.append( 'svg' )
-			.attr( 'width', width )
-			.attr( 'height', height );
+			const svg = d3
+				.select( refs.containerRef.current )
+				.append( 'svg' )
+				.attr( 'width', width )
+				.attr( 'height', height );
 
-		const g = svg
-			.append( 'g' )
-			.attr( 'transform', `translate(${ MARGIN.left },${ MARGIN.top })` );
-
-		const x = d3
-			.scaleTime()
-			.domain( d3.extent( slots, ( s ) => s.date ) )
-			.range( [ 0, innerW ] );
-
-		const maxVal =
-			d3.max( series, ( s ) => d3.max( s.values, ( v ) => v.value ) ) ||
-			1;
-
-		const y = d3
-			.scaleLinear()
-			.domain( [ 0, maxVal * 1.1 ] )
-			.range( [ innerH, 0 ] );
-
-		g.append( 'g' )
-			.attr( 'transform', `translate(0,${ innerH })` )
-			.call(
-				d3
-					.axisBottom( x )
-					.ticks( 8 )
-					.tickFormat( ( d ) => {
-						const month = d.getMonth() + 1;
-						const day = d.getDate();
-						const hour = d.getHours();
-						const min = String( d.getMinutes() ).padStart( 2, '0' );
-						return `${ month }/${ day } ${ hour }:${ min }`;
-					} )
-			)
-			.selectAll( 'text' )
-			.attr( 'transform', 'rotate(-45)' )
-			.style( 'text-anchor', 'end' );
-
-		g.append( 'g' )
-			.call(
-				d3
-					.axisLeft( y )
-					.ticks( 5 )
-					.tickFormat( ( v ) => formatYValue( v, mode ) )
-			)
-			.selectAll( 'text' )
-			.style( 'font-size', '10px' );
-
-		const area = d3
-			.area()
-			.x( ( d ) => x( d.date ) )
-			.y0( innerH )
-			.y1( ( d ) => y( d.value ) )
-			.curve( d3.curveMonotoneX );
-
-		series.forEach( ( s, i ) => {
-			const color = PALETTE[ i % PALETTE.length ];
-			g.append( 'path' )
-				.datum( s.values )
-				.attr( 'fill', color )
-				.attr( 'fill-opacity', 0.5 )
-				.attr( 'stroke', color )
-				.attr( 'stroke-width', 1 )
-				.attr( 'd', area );
-		} );
-
-		// Highlight bar for selected bucket.
-		const bucketWidth = innerW / slots.length;
-		const highlight = g
-			.append( 'rect' )
-			.attr( 'y', 0 )
-			.attr( 'height', innerH )
-			.attr( 'width', bucketWidth )
-			.attr( 'fill', 'rgba(255,255,255,0.1)' )
-			.attr( 'stroke', 'rgba(255,255,255,0.3)' )
-			.attr( 'stroke-width', 1 )
-			.attr( 'opacity', 0 );
-
-		// Tooltip: HTML div outside SVG so it survives re-renders.
-		const tooltip = tooltipRef.current;
-		const dates = slots.map( ( s ) => s.date );
-		const bisect = d3.bisector( ( d ) => d ).left;
-
-		const showTooltip = ( mx ) => {
-			const dateAtMouse = x.invert( mx );
-			const i1 = Math.min(
-				bisect( dates, dateAtMouse ),
-				dates.length - 1
-			);
-			const i0 = Math.max( 0, i1 - 1 );
-			const idx =
-				dateAtMouse - dates[ i0 ] < dates[ i1 ] - dateAtMouse ? i0 : i1;
-			const xPos = x( dates[ idx ] );
-
-			// Show highlight bar on selected bucket.
-			highlight.attr( 'x', xPos - bucketWidth / 2 ).attr( 'opacity', 1 );
-
-			// Top 10 categories by value at this bucket.
-			const entries = series
-				.map( ( s ) => ( {
-					cat: s.cat,
-					val: s.values[ idx ]?.value || 0,
-				} ) )
-				.filter( ( e ) => e.val > 0 )
-				.sort( ( a, b ) => b.val - a.val )
-				.slice( 0, 10 );
-
-			// Build tooltip with safe DOM methods.
-			tooltip.textContent = '';
-			const header = document.createElement( 'strong' );
-			header.textContent = dates[ idx ].toLocaleTimeString();
-			tooltip.appendChild( header );
-			entries.forEach( ( e ) => {
-				tooltip.appendChild( document.createElement( 'br' ) );
-				tooltip.appendChild(
-					document.createTextNode(
-						`${ e.cat }: ${ formatYValue( e.val, mode ) }`
-					)
+			const g = svg
+				.append( 'g' )
+				.attr(
+					'transform',
+					`translate(${ MARGIN.left },${ MARGIN.top })`
 				);
+
+			const x = d3
+				.scaleTime()
+				.domain( d3.extent( slots, ( s ) => s.date ) )
+				.range( [ 0, innerW ] );
+
+			const maxVal =
+				d3.max( series, ( s ) =>
+					d3.max( s.values, ( v ) => v.value )
+				) || 1;
+
+			const y = d3
+				.scaleLinear()
+				.domain( [ 0, maxVal * 1.1 ] )
+				.range( [ innerH, 0 ] );
+
+			// X axis.
+			g.append( 'g' )
+				.attr( 'transform', `translate(0,${ innerH })` )
+				.call( d3.axisBottom( x ).ticks( 8 ).tickFormat( formatXTick ) )
+				.selectAll( 'text' )
+				.attr( 'transform', 'rotate(-45)' )
+				.style( 'text-anchor', 'end' );
+
+			// Y axis.
+			g.append( 'g' )
+				.call(
+					d3
+						.axisLeft( y )
+						.ticks( 5 )
+						.tickFormat( ( v ) => formatYValue( v, mode ) )
+				)
+				.selectAll( 'text' )
+				.style( 'font-size', '10px' );
+
+			// Overlaid areas.
+			const area = d3
+				.area()
+				.x( ( d ) => x( d.date ) )
+				.y0( innerH )
+				.y1( ( d ) => y( d.value ) )
+				.curve( d3.curveMonotoneX );
+
+			series.forEach( ( s, i ) => {
+				const color = PALETTE[ i % PALETTE.length ];
+				g.append( 'path' )
+					.datum( s.values )
+					.attr( 'fill', color )
+					.attr( 'fill-opacity', 0.5 )
+					.attr( 'stroke', color )
+					.attr( 'stroke-width', 1 )
+					.attr( 'd', area );
 			} );
-			tooltip.style.display = 'block';
 
-			// Position below the SVG (including axis labels).
-			tooltip.style.left = `${ MARGIN.left + xPos }px`;
-			const ttParent = containerRef.current.parentElement;
-			tooltip.style.top = `${ ttParent.clientHeight }px`;
-			const tooltipRect = tooltip.getBoundingClientRect();
-			if ( tooltipRect.bottom > window.innerHeight ) {
-				tooltip.style.top = `-${ tooltip.offsetHeight + 4 }px`;
-			}
-			if ( tooltipRect.right > window.innerWidth ) {
-				tooltip.style.left = `${
-					MARGIN.left + xPos - tooltip.offsetWidth
-				}px`;
-			}
-		};
+			// Interactive tooltip.
+			const dates = slots.map( ( s ) => s.date );
+			setupTooltip( g, {
+				innerW,
+				innerH,
+				dates,
+				x,
+				formatEntry: ( idx ) =>
+					series
+						.map( ( s ) => ( {
+							label: s.cat,
+							value: formatYValue(
+								s.values[ idx ]?.value || 0,
+								mode
+							),
+							raw: s.values[ idx ]?.value || 0,
+						} ) )
+						.filter( ( e ) => e.raw > 0 )
+						.sort( ( a, b ) => b.raw - a.raw )
+						.slice( 0, 10 ),
+				tooltipRef: refs.tooltipRef,
+				lastMouseXRef: refs.lastMouseXRef,
+				containerRef: refs.containerRef,
+			} );
 
-		let rafId = null;
-		g.append( 'rect' )
-			.attr( 'width', innerW )
-			.attr( 'height', innerH )
-			.attr( 'fill', 'none' )
-			.attr( 'pointer-events', 'all' )
-			.on( 'mousemove', ( event ) => {
-				const [ mx ] = d3.pointer( event );
-				lastMouseXRef.current = mx;
-				if ( rafId ) {
-					cancelAnimationFrame( rafId );
-				}
-				rafId = requestAnimationFrame( () => {
-					rafId = null;
-					if ( lastMouseXRef.current === null ) {
-						return;
-					}
-					showTooltip( lastMouseXRef.current );
-				} );
-			} )
-			.on( 'mouseleave', hideTooltip );
-
-		function hideTooltip() {
-			if ( rafId ) {
-				cancelAnimationFrame( rafId );
-				rafId = null;
-			}
-			lastMouseXRef.current = null;
-			tooltip.style.display = 'none';
-			highlight.attr( 'opacity', 0 );
-		}
-
-		// Restore tooltip if mouse was over chart before re-render.
-		if ( lastMouseXRef.current !== null ) {
-			showTooltip( lastMouseXRef.current );
-		}
-
-		// Legend.
-		const legendKeys = series.map( ( s, i ) => ( {
-			color: PALETTE[ i % PALETTE.length ],
-			label: s.cat.length > 20 ? s.cat.slice( 0, 18 ) + '...' : s.cat,
-		} ) );
-		const legend = svg
-			.append( 'g' )
-			.attr(
-				'transform',
-				`translate(${ width - MARGIN.right + 10 },${ MARGIN.top })`
+			// Legend.
+			drawLegend(
+				svg,
+				series.map( ( s, i ) => ( {
+					color: PALETTE[ i % PALETTE.length ],
+					label: s.cat,
+				} ) ),
+				width
 			);
-		legendKeys.forEach( ( item, i ) => {
-			const ly = i * 16;
-			legend
-				.append( 'rect' )
-				.attr( 'x', 0 )
-				.attr( 'y', ly )
-				.attr( 'width', 10 )
-				.attr( 'height', 10 )
-				.attr( 'fill', item.color );
-			legend
-				.append( 'text' )
-				.attr( 'x', 14 )
-				.attr( 'y', ly + 9 )
-				.text( item.label )
-				.style( 'font-size', '11px' )
-				.style( 'fill', '#888' );
-		} );
-	}, [ chartState, mode ] );
-
-	// Initial render and data change.
-	useEffect( () => {
-		renderChart();
-	}, [ renderChart ] );
-
-	// Handle resize.
-	useEffect( () => {
-		const handleResize = () => renderChart();
-		window.addEventListener( 'resize', handleResize );
-		return () => window.removeEventListener( 'resize', handleResize );
-	}, [ renderChart ] );
-
-	// Hide tooltip on scroll — chart moves away from cursor without mouseleave.
-	useEffect( () => {
-		const el = containerRef.current;
-		if ( ! el ) {
-			return;
-		}
-		const scrollParent =
-			el.closest( '.components-modal__content' ) || window;
-		const hideOnScroll = () => {
-			lastMouseXRef.current = null;
-			if ( tooltipRef.current ) {
-				tooltipRef.current.style.display = 'none';
-			}
-		};
-		scrollParent.addEventListener( 'scroll', hideOnScroll, {
-			passive: true,
-		} );
-		return () => {
-			scrollParent.removeEventListener( 'scroll', hideOnScroll );
-		};
-	}, [] );
+		},
+		[ chartState, mode ]
+	);
 
 	if ( ! data || Object.keys( data ).length === 0 ) {
 		return null;
