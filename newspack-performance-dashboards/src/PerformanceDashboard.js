@@ -261,9 +261,7 @@ export default function PerformanceDashboard( { onError } ) {
 	useEffect( () => {
 		const loadData = async () => {
 			const [ overviewData, urlsResult ] = await Promise.all( [
-				apiRef.current.fetchOverview( serverFilterRef.current, {
-					categories: true,
-				} ),
+				apiRef.current.fetchOverview( serverFilterRef.current ),
 				apiRef.current.fetchUrls( {
 					...urlParamsRef.current,
 					server: serverFilterRef.current,
@@ -292,9 +290,7 @@ export default function PerformanceDashboard( { onError } ) {
 		}
 		( async () => {
 			const [ overviewData, result ] = await Promise.all( [
-				apiRef.current.fetchOverview( serverFilter, {
-					categories: true,
-				} ),
+				apiRef.current.fetchOverview( serverFilter ),
 				apiRef.current.fetchUrls( {
 					...urlParamsRef.current,
 					server: serverFilter,
@@ -325,9 +321,7 @@ export default function PerformanceDashboard( { onError } ) {
 			lastRefreshRef.current = Date.now();
 			const [ overviewData, urlsResult, serverData ] = await Promise.all(
 				[
-					apiRef.current.fetchOverview( serverFilterRef.current, {
-						categories: true,
-					} ),
+					apiRef.current.fetchOverview( serverFilterRef.current ),
 					apiRef.current.fetchUrls( {
 						...urlParamsRef.current,
 						server: serverFilterRef.current,

@@ -42,26 +42,17 @@ const isValidPartition = ( partition ) =>
  */
 const usePerformanceApi = ( onError ) => {
 	/**
-	 * Fetch performance overview data.
+	 * Fetch performance overview data (always includes category time series).
 	 *
-	 * @param {string}  server             Optional server name for per-server leaderboard.
-	 * @param {Object}  options            Optional request options.
-	 * @param {boolean} options.categories Include category_time_series in response.
+	 * @param {string} server Optional server name for per-server leaderboard.
 	 * @return {Promise<Object|null>} Overview data or null on error.
 	 */
 	const fetchOverview = useCallback(
-		async ( server = '', { categories = false } = {} ) => {
+		async ( server = '' ) => {
 			try {
-				const params = [];
+				let path = '/event-logger/v1/performance/overview?categories=1';
 				if ( server ) {
-					params.push( `server=${ encodeURIComponent( server ) }` );
-				}
-				if ( categories ) {
-					params.push( 'categories=1' );
-				}
-				let path = '/event-logger/v1/performance/overview';
-				if ( params.length ) {
-					path += '?' + params.join( '&' );
+					path += `&server=${ encodeURIComponent( server ) }`;
 				}
 				const data = await apiFetch( { path } );
 				return data;
@@ -223,29 +214,6 @@ const usePerformanceApi = ( onError ) => {
 	);
 
 	/**
-	 * Fetch global category time series.
-	 *
-	 * @param {string} server Optional server name.
-	 * @return {Promise<Object|null>} Category time series data or null.
-	 */
-	const fetchCategories = useCallback(
-		async ( server = '' ) => {
-			try {
-				let path = '/event-logger/v1/performance/overview?categories=1';
-				if ( server ) {
-					path += `&server=${ encodeURIComponent( server ) }`;
-				}
-				const data = await apiFetch( { path } );
-				return data.category_time_series || null;
-			} catch ( err ) {
-				onError( err );
-				return null;
-			}
-		},
-		[ onError ]
-	);
-
-	/**
 	 * Fetch per-URL category time series.
 	 *
 	 * @param {string} hash URL hash.
@@ -276,7 +244,6 @@ const usePerformanceApi = ( onError ) => {
 		fetchRequestDetail,
 		fetchBreakdown,
 		fetchUrlBreakdown,
-		fetchCategories,
 		fetchUrlCategories,
 	};
 };
