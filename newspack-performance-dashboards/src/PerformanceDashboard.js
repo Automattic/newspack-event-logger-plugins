@@ -51,7 +51,7 @@ export default function PerformanceDashboard( { onError } ) {
 	const [ totalUrls, setTotalUrls ] = useState( 0 );
 	const [ urlDetail, setUrlDetail ] = useState( null );
 	const [ categoryData, setCategoryData ] = useState( null );
-	const categoryKeyRef = useRef( null );
+
 	const [ requestDetail, setRequestDetail ] = useState( null );
 	const urlDetailLastModifiedRef = useRef( null );
 
@@ -278,11 +278,7 @@ export default function PerformanceDashboard( { onError } ) {
 				serverFilterRef.current
 			);
 			if ( catData ) {
-				const key = JSON.stringify( catData );
-				if ( key !== categoryKeyRef.current ) {
-					categoryKeyRef.current = key;
-					setCategoryData( catData );
-				}
+				setCategoryData( catData );
 			}
 			setLoading( false );
 		};
@@ -313,11 +309,7 @@ export default function PerformanceDashboard( { onError } ) {
 			const catData =
 				await apiRef.current.fetchCategories( serverFilter );
 			if ( catData ) {
-				const key = JSON.stringify( catData );
-				if ( key !== categoryKeyRef.current ) {
-					categoryKeyRef.current = key;
-					setCategoryData( catData );
-				}
+				setCategoryData( catData );
 			}
 		} )();
 	}, [ serverFilter ] ); // eslint-disable-line react-hooks/exhaustive-deps -- refs are stable.
@@ -355,11 +347,7 @@ export default function PerformanceDashboard( { onError } ) {
 				serverFilterRef.current
 			);
 			if ( catData ) {
-				const key = JSON.stringify( catData );
-				if ( key !== categoryKeyRef.current ) {
-					categoryKeyRef.current = key;
-					setCategoryData( catData );
-				}
+				setCategoryData( catData );
 			}
 		}, intervalMs );
 
