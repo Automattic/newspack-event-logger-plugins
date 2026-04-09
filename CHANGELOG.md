@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Performance Dashboard: category charts now update with the aggregate chart — overview and categories are fetched in a single API call instead of separate requests that could be cached/dropped
 - Auto-refresh fetches immediately when tab becomes visible (skips if last refresh was within the interval)
+- Settings page: guard `log_events` option against non-array values from database — fixes fatal `array_merge` TypeError on the Instrumentation settings page
 
 ## [2.4.14] - 2026-04-08
 

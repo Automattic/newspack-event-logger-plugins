@@ -256,6 +256,9 @@ class Admin {
 	 */
 	public function log_events_callback() {
 		$stored = \get_option( 'event_logger_log_events', [] );
+		if ( ! \is_array( $stored ) ) {
+			$stored = [];
+		}
 		$values = \array_values( \array_filter( $stored, 'is_string' ) );
 		$this->render_array_field_custom( 'log_events', $values, [], \__( 'Hooks to time. Use Browse Hooks to select from categories.', 'newspack-performance-logger' ) );
 	}
