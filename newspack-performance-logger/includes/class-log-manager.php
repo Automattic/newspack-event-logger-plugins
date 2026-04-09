@@ -26,7 +26,6 @@ if ( ! \defined( 'ABSPATH' ) ) {
 class LogManager {
 	public $enabled          = false;
 	private $started         = null;
-	private $tracked         = false;
 	private $finished        = false;
 	private $firehose        = null;
 	private $line_limited    = false;
@@ -286,44 +285,12 @@ class LogManager {
 			return $this->started ?? false;
 		}
 
-		$already_tracked = $this->tracked;
-		$this->tracked   = true;
-
-		if ( ! $already_tracked ) {
-			\register_shutdown_function( [ $this, 'finish' ] );
-			$this->init_firehose( $this->config );
-			$this->log_process();
-		}
-
-		$this->started = true;
-
-		return true;
-	}
-
-	/**
-	 * Ensure that minimal logging has started.
-	 *
-	 * Called automatically by message() to ensure request appears in dashboard.
-	 * Logs basic request lifecycle (process start/complete with 0ms duration)
-	 * so errors/warnings can be reviewed even for skip_urls requests.
-	 * Stats aggregation filters out 0ms duration requests.
-	 *
-	 * @return void
-	 */
-	private function ensure_tracked(): void {
-		if ( $this->tracked || $this->finished ) {
-			return;
-		}
-
-		// Never log as root - creates permission problems for www-data workers.
-		if ( \function_exists( 'posix_getuid' ) && 0 === \posix_getuid() ) {
-			return;
-		}
-
-		$this->tracked = true;
 		\register_shutdown_function( [ $this, 'finish' ] );
 		$this->init_firehose( $this->config );
 		$this->log_process();
+		$this->started = true;
+
+		return true;
 	}
 
 	/**
@@ -361,15 +328,11 @@ class LogManager {
 	/**
 	 * Log a message with the given category and data.
 	 *
-	 * Automatically enables tracking if not already enabled, so requests
-	 * appear in dashboard even for skip_urls (with 0ms duration).
-	 *
 	 * @param string $category Event category/keyword.
 	 * @param array  $data     Additional data to include.
 	 * @return bool True on success.
 	 */
 	public function message( string $category, array $data = [] ): bool {
-		$this->ensure_tracked();
 		// Redact sensitive query parameters in message URLs.
 		if ( isset( $data['m'] ) && \is_string( $data['m'] ) && false !== \strpos( $data['m'], '?' ) ) {
 			$data['m'] = \preg_replace( self::URL_REDACT_PATTERN, '$1$2=[REDACTED]', $data['m'] );
@@ -640,7 +603,7 @@ class LogManager {
 	 * Log final summary including memory usage and resources.
 	 */
 	public function finish(): void {
-		if ( $this->finished || ( ! $this->started && ! $this->tracked ) ) {
+		if ( $this->finished || ! $this->started ) {
 			return;
 		}
 		$this->finished = true;
@@ -678,7 +641,6 @@ class LogManager {
 		$this->complete( 'process', \array_merge( [ 'status_code' => \http_response_code() ?: 0 ], $complete_extra ) );
 		$this->flush_buffer();
 		$this->started = false;
-		$this->tracked = false;
 	}
 
 	/**
