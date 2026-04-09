@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Newspack Performance Workers
  * Description: Background workers for performance data aggregation and auto-tuning. Processes firehose data into flame graphs and URL stats.
- * Version: 2.4.13
+ * Version: 2.4.14
  * Author: Automattic
  * Author URI: https://newspack.com/
  * License: GPL-2.0-or-later
@@ -53,7 +53,7 @@ if ( ! \class_exists( 'Newspack_Performance_Logger\\LogManager' ) ) {
 }
 
 if ( ! \defined( 'NEWSPACK_PERFORMANCE_WORKERS_VERSION' ) ) {
-	\define( 'NEWSPACK_PERFORMANCE_WORKERS_VERSION', '2.4.13' );
+	\define( 'NEWSPACK_PERFORMANCE_WORKERS_VERSION', '2.4.14' );
 }
 
 if ( ! \defined( 'PERFORMANCE_WORKERS_DIR' ) ) {
