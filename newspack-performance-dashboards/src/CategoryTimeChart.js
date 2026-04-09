@@ -89,14 +89,15 @@ const formatYValue = ( val, mode ) => {
 
 export default function CategoryTimeChart( { data, mode, title } ) {
 	const containerRef = useRef( null );
-	const svgRef = useRef( null );
 	const tooltipRef = useRef( null );
 	const lastMouseXRef = useRef( null );
 
-	const categories = useMemo( () => {
+	// Pre-compute chart data.
+	const chartState = useMemo( () => {
 		if ( ! data ) {
-			return [];
+			return { series: [], slots: [] };
 		}
+
 		const totals = {};
 		Object.values( data ).forEach( ( bucket ) => {
 			Object.entries( bucket ).forEach( ( [ cat, stats ] ) => {
@@ -107,36 +108,13 @@ export default function CategoryTimeChart( { data, mode, title } ) {
 				totals[ cat ] = ( totals[ cat ] || 0 ) + val;
 			} );
 		} );
-		return Object.keys( totals ).sort(
+		const categories = Object.keys( totals ).sort(
 			( a, b ) => totals[ b ] - totals[ a ]
 		);
-	}, [ data, mode ] );
-
-	const renderChart = useCallback( () => {
-		if ( ! data || ! containerRef.current || categories.length === 0 ) {
-			return;
-		}
-
-		const container = containerRef.current;
-		const width = container.clientWidth;
-		const height = 200;
-		const innerW = width - MARGIN.left - MARGIN.right;
-		const innerH = height - MARGIN.top - MARGIN.bottom;
-
-		d3.select( svgRef.current ).selectAll( '*' ).remove();
-
-		const svg = d3
-			.select( svgRef.current )
-			.attr( 'width', width )
-			.attr( 'height', height );
-
-		const g = svg
-			.append( 'g' )
-			.attr( 'transform', `translate(${ MARGIN.left },${ MARGIN.top })` );
 
 		const slots = buildTimeSlots();
 
-		const catSeries = categories.map( ( cat ) => ( {
+		const series = categories.map( ( cat ) => ( {
 			cat,
 			values: slots.map( ( slot ) => {
 				const bucket = data[ slot.bucketKey ];
@@ -156,7 +134,34 @@ export default function CategoryTimeChart( { data, mode, title } ) {
 			} ),
 		} ) );
 
-		const series = catSeries;
+		return { series, slots };
+	}, [ data, mode ] );
+
+	const renderChart = useCallback( () => {
+		if ( ! containerRef.current || chartState.series.length === 0 ) {
+			return;
+		}
+
+		const { series, slots } = chartState;
+
+		// Clear previous chart.
+		d3.select( containerRef.current ).selectAll( '*' ).remove();
+
+		// Dimensions.
+		const width = containerRef.current.clientWidth || 800;
+		const height = 200;
+		const innerW = width - MARGIN.left - MARGIN.right;
+		const innerH = height - MARGIN.top - MARGIN.bottom;
+
+		const svg = d3
+			.select( containerRef.current )
+			.append( 'svg' )
+			.attr( 'width', width )
+			.attr( 'height', height );
+
+		const g = svg
+			.append( 'g' )
+			.attr( 'transform', `translate(${ MARGIN.left },${ MARGIN.top })` );
 
 		const x = d3
 			.scaleTime()
@@ -276,9 +281,8 @@ export default function CategoryTimeChart( { data, mode, title } ) {
 
 			// Position below the SVG (including axis labels).
 			tooltip.style.left = `${ MARGIN.left + xPos }px`;
-			// Position below chart, flip above if it would overflow viewport.
-			const belowTop = container.clientHeight;
-			tooltip.style.top = `${ belowTop }px`;
+			const ttParent = containerRef.current.parentElement;
+			tooltip.style.top = `${ ttParent.clientHeight }px`;
 			const tooltipRect = tooltip.getBoundingClientRect();
 			if ( tooltipRect.bottom > window.innerHeight ) {
 				tooltip.style.top = `-${ tooltip.offsetHeight + 4 }px`;
@@ -327,15 +331,18 @@ export default function CategoryTimeChart( { data, mode, title } ) {
 			showTooltip( lastMouseXRef.current );
 		}
 
+		// Legend.
+		const legendKeys = series.map( ( s, i ) => ( {
+			color: PALETTE[ i % PALETTE.length ],
+			label: s.cat.length > 20 ? s.cat.slice( 0, 18 ) + '...' : s.cat,
+		} ) );
 		const legend = svg
 			.append( 'g' )
 			.attr(
 				'transform',
 				`translate(${ width - MARGIN.right + 10 },${ MARGIN.top })`
 			);
-
-		series.forEach( ( s, i ) => {
-			const color = PALETTE[ i % PALETTE.length ];
+		legendKeys.forEach( ( item, i ) => {
 			const ly = i * 16;
 			legend
 				.append( 'rect' )
@@ -343,16 +350,16 @@ export default function CategoryTimeChart( { data, mode, title } ) {
 				.attr( 'y', ly )
 				.attr( 'width', 10 )
 				.attr( 'height', 10 )
-				.attr( 'fill', color );
+				.attr( 'fill', item.color );
 			legend
 				.append( 'text' )
 				.attr( 'x', 14 )
 				.attr( 'y', ly + 9 )
-				.text( s.cat )
+				.text( item.label )
 				.style( 'font-size', '11px' )
 				.style( 'fill', '#888' );
 		} );
-	}, [ data, mode, categories ] );
+	}, [ chartState, mode ] );
 
 	// Initial render and data change.
 	useEffect( () => {
@@ -393,16 +400,12 @@ export default function CategoryTimeChart( { data, mode, title } ) {
 	}
 
 	return (
-		<div
-			ref={ containerRef }
-			style={ {
-				marginBottom: '20px',
-				position: 'relative',
-				minHeight: '228px',
-			} }
-		>
+		<div style={ { marginBottom: '20px', position: 'relative' } }>
 			<h3>{ title }</h3>
-			<svg ref={ svgRef } />
+			<div
+				ref={ containerRef }
+				style={ { width: '100%', minHeight: '200px' } }
+			/>
 			<div
 				ref={ tooltipRef }
 				style={ {
