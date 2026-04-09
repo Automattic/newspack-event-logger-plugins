@@ -221,7 +221,7 @@ export default function CategoryTimeChart( { data, mode, title } ) {
 	}
 
 	return (
-		<div style={ { marginBottom: '20px', position: 'relative' } }>
+		<div style={ { position: 'relative' } }>
 			<h3>{ title }</h3>
 			<div
 				ref={ containerRef }
