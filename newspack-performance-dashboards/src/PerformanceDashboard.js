@@ -315,14 +315,15 @@ export default function PerformanceDashboard( { onError } ) {
 	}, [ serverFilter ] ); // eslint-disable-line react-hooks/exhaustive-deps -- refs are stable.
 
 	// Auto-refresh dashboard only when modal is closed and page is visible.
+	const lastRefreshRef = useRef( 0 );
 	useEffect( () => {
 		// Skip refreshes when URL detail modal is open or page is hidden.
 		if ( selectedUrl || ! isPageVisible ) {
 			return;
 		}
 
-		const intervalMs = parseInt( refreshInterval, 10 );
-		const interval = setInterval( async () => {
+		const doRefresh = async () => {
+			lastRefreshRef.current = Date.now();
 			const [ overviewData, urlsResult, serverData ] = await Promise.all(
 				[
 					apiRef.current.fetchOverview( serverFilterRef.current ),
@@ -349,7 +350,16 @@ export default function PerformanceDashboard( { onError } ) {
 			if ( catData ) {
 				setCategoryData( catData );
 			}
-		}, intervalMs );
+		};
+
+		const intervalMs = parseInt( refreshInterval, 10 );
+
+		// Refresh immediately if stale (last refresh older than the interval).
+		if ( Date.now() - lastRefreshRef.current >= intervalMs ) {
+			doRefresh();
+		}
+
+		const interval = setInterval( doRefresh, intervalMs );
 
 		return () => clearInterval( interval );
 	}, [ refreshInterval, selectedUrl, isPageVisible ] );
