@@ -69,6 +69,13 @@ require_once __DIR__ . '/vendor/autoload.php';
 
 // Register config schema options (all extended - only needed for workers/admin).
 \add_filter(
+	'newspack_event_logger_option_schema_core',
+	function ( $schema ) {
+		$schema['enable_workers'] = 'bool';
+		return $schema;
+	}
+);
+\add_filter(
 	'newspack_event_logger_option_schema_extended',
 	function ( $schema ) {
 		return \array_merge(
@@ -77,7 +84,6 @@ require_once __DIR__ . '/vendor/autoload.php';
 				'auto_disable_threshold'       => 'int',
 				'auto_protect_time_threshold'  => 'float',
 				'significant_events'           => 'array_strings',
-				'enable_workers'  => 'bool', // Set false to disable workers on non-hub nodes.
 			]
 		);
 	}

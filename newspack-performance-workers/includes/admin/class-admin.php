@@ -29,16 +29,28 @@ class Admin {
 	 * Register Worker-specific settings.
 	 */
 	public function register_settings() {
-		// Register options owned by this plugin (FlameBuilder auto-tune).
+		// Register options owned by this plugin.
+		\register_setting( 'event_logger_options_group', 'event_logger_enable_workers', [ 'sanitize_callback' => 'absint' ] );
 		\register_setting( 'event_logger_options_group', 'event_logger_auto_disable_threshold', [ 'sanitize_callback' => [ $this, 'sanitize_int_or_empty' ], 'autoload' => false ] );
 		\register_setting( 'event_logger_options_group', 'event_logger_auto_protect_time_threshold', [ 'sanitize_callback' => [ $this, 'sanitize_float_or_empty' ], 'autoload' => false ] );
 		\register_setting( 'event_logger_options_group', 'event_logger_significant_events', [ 'sanitize_callback' => [ $this, 'sanitize_array_option' ], 'autoload' => false ] );
 
-		// Auto-tuning section - add to event_logger settings page.
-		\add_settings_section( 'event_logger_workers_section', \__( 'Auto-Tuning', 'newspack-performance-workers' ), [ $this, 'workers_section_callback' ], 'event_logger' );
+		// Workers section.
+		\add_settings_section( 'event_logger_workers_section', \__( 'Performance Workers', 'newspack-performance-workers' ), [ $this, 'workers_section_callback' ], 'event_logger' );
 
+		\add_settings_field( 'enable_workers', \__( 'Enable Workers', 'newspack-performance-workers' ), [ $this, 'enable_workers_callback' ], 'event_logger', 'event_logger_workers_section' );
 		\add_settings_field( 'auto_tune', \__( 'Auto-Tune', 'newspack-performance-workers' ), [ $this, 'auto_tune_callback' ], 'event_logger', 'event_logger_workers_section' );
 		\add_settings_field( 'significant_events', \__( 'Significant Events', 'newspack-performance-workers' ), [ $this, 'significant_events_callback' ], 'event_logger', 'event_logger_workers_section' );
+	}
+
+	public function enable_workers_callback() {
+		$config  = \Newspack_Event_Logger\Config::load_config();
+		$enabled = \get_option( 'event_logger_enable_workers', $config['enable_workers'] ?? 1 );
+		?>
+		<input type="hidden" name="event_logger_enable_workers" value="0" />
+		<input type="checkbox" id="enable_workers" name="event_logger_enable_workers" value="1" <?php checked( 1, $enabled ); ?> />
+		<label for="enable_workers"><?php \esc_html_e( 'Enable RequestBuilder and FlameBuilder', 'newspack-performance-workers' ); ?></label>
+		<?php
 	}
 
 	/**
