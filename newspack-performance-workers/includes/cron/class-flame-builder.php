@@ -291,7 +291,7 @@ class FlameBuilder {
 		$flame_data['url_hash'] = $url_hash;
 		$json                   = \wp_json_encode( $flame_data );
 
-		return false !== $context['flames_log']->write( $json );
+		return false !== $context['flames_log']->write( $json, $flame_data );
 	}
 
 	/**
@@ -320,12 +320,13 @@ class FlameBuilder {
 	/**
 	 * Format index entry callback for Firehose::with_index().
 	 *
-	 * @param string $line     The JSON line written to the log.
-	 * @param array  $position Position array with segment_id, offset, length.
+	 * @param string     $line     The JSON line written to the log.
+	 * @param array      $position Position array with segment_id, offset, length.
+	 * @param array|null $data     Pre-decoded data (avoids re-parsing $line).
 	 * @return string|null Index entry or null to skip.
 	 */
-	public static function format_index_entry( string $line, array $position ): ?string {
-		$data = \json_decode( $line, true, 64 );
+	public static function format_index_entry( string $line, array $position, ?array &$data = null ): ?string {
+		$data = $data ?? \json_decode( $line, true, 64 );
 		if ( ! \is_array( $data ) || empty( $data['rid'] ) ) {
 			return null;
 		}

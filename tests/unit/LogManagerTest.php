@@ -221,8 +221,8 @@ class LogManagerTest extends TestCase {
 
 	public function test_get_request_id_returns_string(): void {
 		$lm = LogManager::instance();
-		// Force initialization by calling message.
-		$lm->message( 'init' );
+		// Force initialization by calling start (triggers ensure_started/init_firehose).
+		$lm->start( 'init' );
 		$rid = $lm->get_request_id();
 		$this->assertIsString( $rid );
 		$this->assertNotEmpty( $rid );
@@ -349,9 +349,9 @@ class LogManagerTest extends TestCase {
 		\putenv( 'LOCAL_EVENT_LOGGER_CONF=' . $this->config_path( 'logging-enabled' ) );
 		Config::reset();
 
-		// Call message() without start() first — triggers tracked-but-not-started path.
 		$lm = LogManager::instance();
-		$lm->message( 'custom_event', [ 'm' => 'tracked without start' ] );
+		// Call start() to trigger firehose initialization.
+		$lm->start( 'custom_event', [ 'm' => 'tracked with start' ] );
 
 		// Brief sleep to ensure non-zero duration.
 		\usleep( 5000 ); // 5ms.
@@ -393,6 +393,7 @@ class LogManagerTest extends TestCase {
 		Config::reset();
 
 		$lm = LogManager::instance();
+		$lm->start( 'redaction_test' );
 		$lm->message( 'test', [ 'm' => 'https://example.com?client_secret=SECRET&id=123' ] );
 		$lm->flush_buffer();
 
@@ -469,6 +470,7 @@ class LogManagerTest extends TestCase {
 		Config::reset();
 
 		$lm = LogManager::instance();
+		$lm->start( 'k_override_test' );
 		$lm->message( 'job', [ 'k' => 'discovery', 'm' => 'test' ] );
 		$lm->flush_buffer();
 
@@ -493,6 +495,7 @@ class LogManagerTest extends TestCase {
 		Config::reset();
 
 		$lm = LogManager::instance();
+		$lm->start( 'ts_override_test' );
 		$lm->message( 'test', [ 'ts' => 12345.678, 'm' => 'hello' ] );
 		$lm->flush_buffer();
 
@@ -513,6 +516,7 @@ class LogManagerTest extends TestCase {
 		Config::reset();
 
 		$lm = LogManager::instance();
+		$lm->start( 'rid_override_test' );
 		$lm->message( 'test', [ 'rid' => 'fake_id', 'm' => 'hello' ] );
 		$lm->flush_buffer();
 
@@ -534,6 +538,7 @@ class LogManagerTest extends TestCase {
 		Config::reset();
 
 		$lm = LogManager::instance();
+		$lm->start( 'n_override_test' );
 		$lm->message( 'test', [ 'n' => 99999, 'm' => 'hello' ] );
 		$lm->flush_buffer();
 

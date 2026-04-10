@@ -87,6 +87,20 @@ class FirehoseStreamController extends SSEControllerBase {
 	 * @return \WP_Error|void WP_Error on failure, exits on success.
 	 */
 	public function stream( \WP_REST_Request $request ) {
+		$result = $this->stream_run( $request );
+		if ( \is_wp_error( $result ) ) {
+			return $result;
+		}
+		exit;
+	}
+
+	/**
+	 * Run firehose stream setup, polling loop, and cleanup (without exit).
+	 *
+	 * @param \WP_REST_Request $request Request object.
+	 * @return \WP_Error|void WP_Error if rate limited, void on normal completion.
+	 */
+	protected function stream_run( \WP_REST_Request $request ) {
 		$partition   = $request->get_param( 'partition' );
 		$segment_id  = $request->get_param( 'segment_id' );
 		$offset      = $request->get_param( 'offset' );
@@ -141,7 +155,7 @@ class FirehoseStreamController extends SSEControllerBase {
 			if ( ! $fh ) {
 				// No segments yet - wait and retry.
 				$now = \time();
-				if ( $now - $last_heartbeat >= self::HEARTBEAT_INTERVAL ) {
+				if ( $now - $last_heartbeat >= static::HEARTBEAT_INTERVAL ) {
 					$this->send_sse_event( 'heartbeat', [
 						'ts'        => $now,
 						'partition' => $partition,
@@ -185,7 +199,7 @@ class FirehoseStreamController extends SSEControllerBase {
 			// Check for next segment if caught up.
 			if ( $reader->is_caught_up() ) {
 				$now = \time();
-				if ( $now - $last_heartbeat >= self::HEARTBEAT_INTERVAL ) {
+				if ( $now - $last_heartbeat >= static::HEARTBEAT_INTERVAL ) {
 					$this->send_sse_event( 'heartbeat', [
 						'ts'        => $now,
 						'partition' => $partition,
@@ -206,6 +220,5 @@ class FirehoseStreamController extends SSEControllerBase {
 		// Cleanup.
 		$reader->close();
 		$this->end_sse_stream();
-		exit;
 	}
 }

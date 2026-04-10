@@ -52,6 +52,31 @@ class ErrorsController extends SSEControllerBase {
 	}
 
 	/**
+	 * Transform a single errors.log line into a batch entry.
+	 *
+	 * @param string $line Trimmed log line.
+	 * @param int    $p    Partition number.
+	 * @return array|null Batch entry or null to skip.
+	 */
+	public static function transform_line( string $line, int $p ): ?array {
+		$entry = \json_decode( $line, true, 64 );
+		if ( ! \is_array( $entry ) || empty( $entry['rid'] ) ) {
+			return null;
+		}
+		$m = $entry['m'] ?? '';
+		if ( \is_string( $m ) && \strlen( $m ) > 1000 ) {
+			$m = \substr( $m, 0, 1000 ) . '...';
+		}
+		return [
+			'rid' => $entry['rid'],
+			'ts'  => $entry['ts'] ?? 0,
+			'k'   => $entry['k'] ?? '',
+			'm'   => $m,
+			'n'   => $entry['n'] ?? 0,
+		];
+	}
+
+	/**
 	 * Stream error/warning entries via SSE.
 	 *
 	 * @param \WP_REST_Request $request Request object.
@@ -66,23 +91,7 @@ class ErrorsController extends SSEControllerBase {
 				'tail_bytes'      => 50 * 1024,
 				'batch_threshold' => 50,
 			],
-			function ( string $line, int $p ): ?array {
-				$entry = \json_decode( $line, true, 64 );
-				if ( ! \is_array( $entry ) || empty( $entry['rid'] ) ) {
-					return null;
-				}
-				$m = $entry['m'] ?? '';
-				if ( \is_string( $m ) && \strlen( $m ) > 1000 ) {
-					$m = \substr( $m, 0, 1000 ) . '...';
-				}
-				return [
-					'rid' => $entry['rid'],
-					'ts'  => $entry['ts'] ?? 0,
-					'k'   => $entry['k'] ?? '',
-					'm'   => $m,
-					'n'   => $entry['n'] ?? 0,
-				];
-			}
+			[ static::class, 'transform_line' ]
 		);
 	}
 }

@@ -80,6 +80,23 @@ class RawlogsController extends SSEControllerBase {
 	}
 
 	/**
+	 * Transform a single raw log line into a batch entry.
+	 *
+	 * @param string $line Trimmed log line.
+	 * @param int    $p    Partition number.
+	 * @return array|null Batch entry or null to skip.
+	 */
+	public static function transform_line( string $line, int $p ): ?array {
+		if ( '' === $line ) {
+			return null;
+		}
+		if ( \strlen( $line ) > 1000 ) {
+			$line = \substr( $line, 0, 1000 ) . '...';
+		}
+		return [ 'p' => $p, 'line' => $line ];
+	}
+
+	/**
 	 * Stream raw log entries via SSE.
 	 *
 	 * @param \WP_REST_Request $request Request object.
@@ -97,15 +114,7 @@ class RawlogsController extends SSEControllerBase {
 				'batch_threshold' => 10,
 				'config_extras'   => [ 'log' => $log_file ],
 			],
-			function ( string $line, int $p ): ?array {
-				if ( '' === $line ) {
-					return null;
-				}
-				if ( \strlen( $line ) > 1000 ) {
-					$line = \substr( $line, 0, 1000 ) . '...';
-				}
-				return [ 'p' => $p, 'line' => $line ];
-			}
+			[ static::class, 'transform_line' ]
 		);
 	}
 }

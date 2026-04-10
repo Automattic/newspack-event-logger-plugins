@@ -239,11 +239,11 @@ class RequestBuilder {
 
 		if ( isset( $context['state_callbacks'][ $keyword ] ) ) {
 			$context['state_callbacks'][ $keyword ]( $request, $entry );
-		} elseif ( \preg_match( '/^(.+?) \(start\)$/', $keyword, $m ) ) {
+		} elseif ( \str_ends_with( $keyword, ' (start)' ) ) {
 			$what = $entry['m'] ?? '';
-			self::push_stack( $request, $m[1], \is_string( $what ) ? $what : '' );
-		} elseif ( \preg_match( '/^(.+?) \(complete\)$/', $keyword, $m ) ) {
-			self::pop_stack( $request, $m[1], $entry['duration_ms'] ?? 0, $entry['ts'] ?? 0 );
+			self::push_stack( $request, \substr( $keyword, 0, -8 ), \is_string( $what ) ? $what : '' );
+		} elseif ( \str_ends_with( $keyword, ' (complete)' ) ) {
+			self::pop_stack( $request, \substr( $keyword, 0, -11 ), $entry['duration_ms'] ?? 0, $entry['ts'] ?? 0 );
 		}
 
 		// Evict runaway requests immediately.
@@ -264,7 +264,8 @@ class RequestBuilder {
 			if ( \is_string( $m ) && \strlen( $m ) > self::MAX_ENTRY_MESSAGE_LENGTH ) {
 				$m = \substr( $m, 0, self::MAX_ENTRY_MESSAGE_LENGTH );
 			} elseif ( \is_array( $m ) ) {
-				$encoded_check = \wp_json_encode( $m );
+				// phpcs:ignore WordPress.WP.AlternativeFunctions.json_encode_json_encode -- wp_json_encode overhead unnecessary for throwaway length check.
+				$encoded_check = \json_encode( $m );
 				if ( false !== $encoded_check && \strlen( $encoded_check ) > self::MAX_ENTRY_MESSAGE_LENGTH ) {
 					$m = '';
 				}
@@ -289,7 +290,7 @@ class RequestBuilder {
 		if ( 'complete' === ( $request['state'] ?? '' ) ) {
 			// Write immediately to get state out of RAM.
 			if ( ! empty( $request['url'] ) ) {
-				$context['requests_log']->write( \wp_json_encode( $request ) );
+				$context['requests_log']->write( \wp_json_encode( $request ), $request );
 			}
 			$context['request_cache']->delete( $rid );
 		} else {
@@ -383,7 +384,7 @@ class RequestBuilder {
 		// so callback completion does NOT subtract from the hook.
 		// Non-callback children subtract from BOTH the callback (if inside one)
 		// AND the callback's parent hook.
-		if ( ! empty( $request['stack'] ) && ! \preg_match( '/ @\d+$/', $state ) ) {
+		if ( ! empty( $request['stack'] ) && ! self::is_callback_state( $state ) ) {
 			for ( $j = \count( $request['stack'] ) - 1; $j >= 0; $j-- ) {
 				$ancestor = $request['stack'][ $j ];
 				if ( 'process' === $ancestor ) {
@@ -399,12 +400,23 @@ class RequestBuilder {
 					// If we just subtracted from a callback, continue to also
 					// subtract from its parent hook. Stop after the first
 					// non-callback ancestor.
-					if ( ! \preg_match( '/ @\d+$/', $ancestor ) ) {
+					if ( ! self::is_callback_state( $ancestor ) ) {
 						break;
 					}
 				}
 			}
 		}
+	}
+
+	/**
+	 * Check if a state label is a callback (ends with " @N").
+	 *
+	 * @param string $state State label.
+	 * @return bool True if callback state.
+	 */
+	private static function is_callback_state( string $state ): bool {
+		$at_pos = \strrpos( $state, ' @' );
+		return false !== $at_pos && \ctype_digit( \substr( $state, $at_pos + 2 ) );
 	}
 
 	/**
@@ -430,7 +442,7 @@ class RequestBuilder {
 		$request['duration_ms']  = ( $now - $start_ts ) * 1000;
 		$request['status_code']  = $request['status_code'] ?? 0;
 		$request['state']        = 'complete';
-		$context['requests_log']->write( \wp_json_encode( $request ) );
+		$context['requests_log']->write( \wp_json_encode( $request ), $request );
 	}
 
 	/**
@@ -463,12 +475,13 @@ class RequestBuilder {
 	/**
 	 * Format index entry callback for Firehose::with_index().
 	 *
-	 * @param string $line     The JSON line written.
-	 * @param array  $position Position array.
+	 * @param string     $line     The JSON line written.
+	 * @param array      $position Position array.
+	 * @param array|null $data     Pre-decoded data (avoids re-parsing $line).
 	 * @return string|null Index entry or null.
 	 */
-	public static function format_index_entry( string $line, array $position ): ?string {
-		$request = \json_decode( $line, true, 64 );
+	public static function format_index_entry( string $line, array $position, ?array &$data = null ): ?string {
+		$request = $data ?? \json_decode( $line, true, 64 );
 		if ( ! \is_array( $request ) || empty( $request['url'] ) ) {
 			return null;
 		}

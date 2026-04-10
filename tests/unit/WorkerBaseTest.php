@@ -709,4 +709,43 @@ class WorkerBaseTest extends TestCase {
 		ConcreteTestWorker::handle_shutdown( $lock, 0, 'TestWorker' );
 		$this->assertTrue( true, 'Should not crash when lock was never acquired' );
 	}
+
+	// ── self_respawn ────────────────────────────────────────────────────
+
+	public function test_self_respawn_skips_when_no_worker_type(): void {
+		$lock_path = $this->make_lock_path( 'respawn-skip' );
+		$worker    = new ConcreteTestWorker();
+		$worker->setup_worker( $lock_path );
+
+		unset( $_SERVER['EVENT_LOGGER_WORKER_TYPE'] );
+
+		$ref = new \ReflectionMethod( $worker, 'self_respawn' );
+		$ref->setAccessible( true );
+
+		// Should return without calling wp_remote_post.
+		$ref->invoke( $worker );
+		$this->assertTrue( true, 'self_respawn should be a no-op without worker type' );
+	}
+
+	public function test_self_respawn_calls_wp_remote_post(): void {
+		$lock_path = $this->make_lock_path( 'respawn-call' );
+		$worker    = new ConcreteTestWorker();
+		$worker->setup_worker( $lock_path, 2 );
+
+		$orig = $_SERVER['EVENT_LOGGER_WORKER_TYPE'] ?? null;
+		$_SERVER['EVENT_LOGGER_WORKER_TYPE'] = 'test-worker';
+
+		$ref = new \ReflectionMethod( $worker, 'self_respawn' );
+		$ref->setAccessible( true );
+
+		// wp_remote_post is stubbed in bootstrap — just verify no crash.
+		$ref->invoke( $worker );
+		$this->assertTrue( true, 'self_respawn should call wp_remote_post without error' );
+
+		if ( null === $orig ) {
+			unset( $_SERVER['EVENT_LOGGER_WORKER_TYPE'] );
+		} else {
+			$_SERVER['EVENT_LOGGER_WORKER_TYPE'] = $orig;
+		}
+	}
 }

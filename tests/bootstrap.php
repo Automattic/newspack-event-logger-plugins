@@ -304,7 +304,7 @@ if ( ! function_exists( 'current_user_can' ) ) {
 	 * @return bool
 	 */
 	function current_user_can( $capability ) {
-		return true;
+		return $GLOBALS['_wp_test_user_can'] ?? true;
 	}
 }
 
@@ -993,6 +993,8 @@ $extra_autoloaders = [
 	WP_PLUGIN_DIR . '/newspack-event-dashboards/vendor/autoload.php',
 	WP_PLUGIN_DIR . '/newspack-performance-dashboards/vendor/autoload.php',
 	WP_PLUGIN_DIR . '/newspack-performance-aggregator/vendor/autoload.php',
+	WP_PLUGIN_DIR . '/newspack-performance-gyroscope/vendor/autoload.php',
+	WP_PLUGIN_DIR . '/newspack-performance-request-log/vendor/autoload.php',
 ];
 
 foreach ( $extra_autoloaders as $autoloader ) {
@@ -1037,6 +1039,204 @@ if ( ! class_exists( '\Memcache' ) ) {
 }
 
 // ── Schema Filter Registration ───────────────────────────────────────────────────
+// ── Settings API stubs ──────────────────────────────────────────────
+
+$GLOBALS['_wp_test_registered_settings'] = [];
+
+if ( ! function_exists( 'register_setting' ) ) {
+	function register_setting( $option_group, $option_name, $args = [] ) {
+		$GLOBALS['_wp_test_registered_settings'][ $option_name ] = [
+			'group' => $option_group,
+			'args'  => $args,
+		];
+	}
+}
+
+if ( ! function_exists( 'add_settings_section' ) ) {
+	function add_settings_section( $id, $title, $callback, $page, $args = [] ) {
+	}
+}
+
+if ( ! function_exists( 'add_settings_field' ) ) {
+	function add_settings_field( $id, $title, $callback, $page, $section = 'default', $args = [] ) {
+	}
+}
+
+if ( ! function_exists( 'checked' ) ) {
+	function checked( $checked, $current = true, $echo = true ) {
+		$result = ( (string) $checked === (string) $current ) ? " checked='checked'" : '';
+		if ( $echo ) {
+			echo $result;
+		}
+		return $result;
+	}
+}
+
+if ( ! function_exists( 'esc_html_e' ) ) {
+	function esc_html_e( $text, $domain = 'default' ) {
+		echo esc_html( $text );
+	}
+}
+
+if ( ! function_exists( 'esc_attr' ) ) {
+	function esc_attr( $text ) {
+		return htmlspecialchars( (string) $text, ENT_QUOTES, 'UTF-8' );
+	}
+}
+
+if ( ! function_exists( 'esc_attr_e' ) ) {
+	function esc_attr_e( $text, $domain = 'default' ) {
+		echo esc_attr( $text );
+	}
+}
+
+if ( ! function_exists( 'esc_url' ) ) {
+	function esc_url( $url ) {
+		return filter_var( $url, FILTER_SANITIZE_URL ) ?: '';
+	}
+}
+
+if ( ! function_exists( 'esc_textarea' ) ) {
+	function esc_textarea( $text ) {
+		return htmlspecialchars( (string) $text, ENT_QUOTES, 'UTF-8' );
+	}
+}
+
+if ( ! function_exists( 'esc_js' ) ) {
+	function esc_js( $text ) {
+		return addslashes( (string) $text );
+	}
+}
+
+// ── Admin page / menu stubs ────────────────────────────────────────
+
+if ( ! function_exists( 'admin_url' ) ) {
+	function admin_url( $path = '' ) {
+		return 'http://localhost/wp-admin/' . ltrim( $path, '/' );
+	}
+}
+
+if ( ! function_exists( 'wp_nonce_field' ) ) {
+	function wp_nonce_field( $action = -1, $name = '_wpnonce', $referer = true, $echo = true ) {
+		$html = '<input type="hidden" name="' . esc_attr( $name ) . '" value="test-nonce" />';
+		if ( $echo ) {
+			echo $html;
+		}
+		return $html;
+	}
+}
+
+if ( ! function_exists( 'wp_safe_redirect' ) ) {
+	function wp_safe_redirect( $location, $status = 302 ) {
+		$GLOBALS['_wp_test_redirect'] = [ 'location' => $location, 'status' => $status ];
+	}
+}
+
+if ( ! function_exists( 'wp_die' ) ) {
+	function wp_die( $message = '', $title = '', $args = [] ) {
+		throw new \RuntimeException( 'wp_die: ' . $message );
+	}
+}
+
+if ( ! function_exists( 'add_menu_page' ) ) {
+	function add_menu_page( $page_title = '', $menu_title = '', $capability = '', $menu_slug = '', $callback = '', $icon_url = '', $position = null ) {
+		return $menu_slug;
+	}
+}
+
+if ( ! function_exists( 'add_submenu_page' ) ) {
+	function add_submenu_page( $parent_slug, $page_title, $menu_title, $capability, $menu_slug, $callback = '', $position = null ) {
+		return $menu_slug;
+	}
+}
+
+if ( ! function_exists( 'add_options_page' ) ) {
+	function add_options_page( $page_title, $menu_title, $capability, $menu_slug, $callback = '', $position = null ) {
+		return $menu_slug;
+	}
+}
+
+if ( ! function_exists( 'settings_fields' ) ) {
+	function settings_fields( $option_group ) {
+	}
+}
+
+if ( ! function_exists( 'do_settings_sections' ) ) {
+	function do_settings_sections( $page ) {
+	}
+}
+
+if ( ! function_exists( 'submit_button' ) ) {
+	function submit_button( $text = null, $type = 'primary', $name = 'submit', $wrap = true, $other_attributes = '' ) {
+		echo '<input type="submit" name="' . esc_attr( $name ) . '" value="' . esc_attr( $text ?? 'Save Changes' ) . '" />';
+	}
+}
+
+// ── Asset enqueue stubs ─────────────────────────────────────────────
+
+if ( ! function_exists( 'wp_enqueue_script' ) ) {
+	function wp_enqueue_script( $handle, $src = '', $deps = [], $ver = false, $args = [] ) {
+	}
+}
+
+if ( ! function_exists( 'wp_enqueue_style' ) ) {
+	function wp_enqueue_style( $handle, $src = '', $deps = [], $ver = false, $media = 'all' ) {
+	}
+}
+
+if ( ! function_exists( 'wp_localize_script' ) ) {
+	function wp_localize_script( $handle, $object_name, $l10n ) {
+		return true;
+	}
+}
+
+if ( ! function_exists( 'wp_create_nonce' ) ) {
+	function wp_create_nonce( $action = -1 ) {
+		return 'test-nonce';
+	}
+}
+
+if ( ! function_exists( 'printf' ) ) {
+	// printf is a PHP built-in, but define esc_html-like version if needed.
+}
+
+// ── WP-CLI stubs ────────────────────────────────────────────────────
+
+if ( ! class_exists( 'WP_CLI' ) ) {
+	class WP_CLI {
+		public static array $log = [];
+
+		public static function log( $message ) {
+			self::$log[] = [ 'level' => 'log', 'message' => $message ];
+		}
+
+		public static function success( $message ) {
+			self::$log[] = [ 'level' => 'success', 'message' => $message ];
+		}
+
+		public static function warning( $message ) {
+			self::$log[] = [ 'level' => 'warning', 'message' => $message ];
+		}
+
+		public static function error( $message ) {
+			self::$log[] = [ 'level' => 'error', 'message' => $message ];
+			throw new \RuntimeException( 'WP_CLI::error: ' . $message );
+		}
+
+		public static function reset() {
+			self::$log = [];
+		}
+	}
+}
+
+if ( ! class_exists( 'WP_CLI_Command' ) ) {
+	class WP_CLI_Command {
+	}
+}
+
+
+require_once __DIR__ . '/stubs/wp-cli-utils.php';
+
 // Register option schema extensions that would normally come from plugin init files.
 // Must be after add_filter stub is defined (above) and after autoloaders.
 \add_filter(

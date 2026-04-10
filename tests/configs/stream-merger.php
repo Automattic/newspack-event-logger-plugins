@@ -1,0 +1,21 @@
+<?php
+return [
+	'base_directory'           => '/tmp/event-logger-test-stream-merger',
+	'num_partitions'           => 1,
+	'num_segments'             => 2,
+	'segment_size'             => 1024,
+	'max_lifespan'             => 0,
+	'enable_logging'           => false,
+	'enable_workers'           => true,
+	'memcache_servers'         => [ getenv( 'MEMCACHE_HOST' ) ?: 'memcache1:11211' ],
+	'allowed_users'            => [],
+	'skip_urls'                => [],
+	'log_urls'                 => [],
+	'custom_colors'            => [],
+	'custom_events'            => [],
+	'log_events'               => [],
+	'log_memory'               => false,
+	'flush_every_line'         => false,
+	'aggregator_verify_ssl'    => false,
+	'aggregator_allow_http'    => true,
+];

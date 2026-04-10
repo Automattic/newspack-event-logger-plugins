@@ -35,26 +35,13 @@
             <directory>/usr/src/newspack-event-aggregator/vendor</directory>
             <directory>/usr/src/newspack-event-dashboards/vendor</directory>
             <directory>/usr/src/newspack-performance-dashboards/vendor</directory>
-            <!-- Admin UI — WordPress rendering, untestable -->
+            <!-- Admin UI — enqueue-only classes excluded (no business logic) -->
             <directory>/usr/src/newspack-event-logger/includes/admin</directory>
             <directory>/usr/src/newspack-event-dashboards/includes/admin</directory>
-            <directory>/usr/src/newspack-event-aggregator/includes/admin</directory>
-            <directory>/usr/src/newspack-performance-logger/includes/admin</directory>
-            <directory>/usr/src/newspack-performance-workers/includes/admin</directory>
             <directory>/usr/src/newspack-performance-dashboards/includes/admin</directory>
             <directory>/usr/src/newspack-performance-gyroscope/includes/admin</directory>
             <directory>/usr/src/newspack-performance-request-log/includes/admin</directory>
-            <!-- CLI commands — need WP_CLI runtime -->
-            <directory>/usr/src/newspack-event-logger/includes/cli</directory>
-            <directory>/usr/src/newspack-performance-logger/includes/cli</directory>
-            <!-- SSE streaming controllers — long-running loops, untestable -->
-            <file>/usr/src/newspack-event-logger/includes/rest-api/class-sse-controller-base.php</file>
-            <file>/usr/src/newspack-event-logger/includes/rest-api/class-firehose-stream-controller.php</file>
-            <file>/usr/src/newspack-event-dashboards/includes/rest-api/class-rawlogs-controller.php</file>
-            <file>/usr/src/newspack-performance-dashboards/includes/rest-api/class-errors-controller.php</file>
-            <file>/usr/src/newspack-performance-gyroscope/includes/rest-api/class-gyroscope-controller.php</file>
-            <file>/usr/src/newspack-performance-request-log/includes/rest-api/class-requests-controller.php</file>
-            <file>/usr/src/newspack-event-aggregator/includes/cron/class-stream-merger.php</file>
+            <!-- SSE streaming controllers — loop bodies tested via testable subclasses -->
         </exclude>
     </source>
 

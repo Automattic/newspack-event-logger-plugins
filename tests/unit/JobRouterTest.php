@@ -65,8 +65,6 @@ class JobRouterTest extends TestCase {
 
 		$this->assertArrayHasKey( 'jobs_log', $context );
 		$this->assertInstanceOf( Firehose::class, $context['jobs_log'] );
-		$this->assertArrayHasKey( 'queue', $context );
-		$this->assertEmpty( $context['queue'] );
 	}
 
 	public function test_process_firehose_job_entry(): void {
@@ -84,9 +82,14 @@ class JobRouterTest extends TestCase {
 		] );
 
 		JobRouter::process( $entry, 'firehose.log', $context );
-		$this->assertCount( 1, $context['queue'] );
-		$this->assertSame( 'my_handler', $context['queue'][0]['handler'] );
-		$this->assertSame( 'job', $context['queue'][0]['type'] );
+		$jobs_dir = self::TEST_DIR . '/logs/jobs.log/p0';
+		$this->assertDirectoryExists( $jobs_dir );
+		$files = \glob( $jobs_dir . '/*.log' );
+		$this->assertNotEmpty( $files );
+		$content = \file_get_contents( $files[0] );
+		$decoded = \json_decode( \trim( $content ), true );
+		$this->assertSame( 'my_handler', $decoded['handler'] );
+		$this->assertSame( 'job', $decoded['type'] );
 	}
 
 	public function test_process_firehose_remote_job_entry(): void {
@@ -104,8 +107,12 @@ class JobRouterTest extends TestCase {
 		] );
 
 		JobRouter::process( $entry, 'firehose.log', $context );
-		$this->assertCount( 1, $context['queue'] );
-		$this->assertSame( 'remote_job', $context['queue'][0]['type'] );
+		$jobs_dir = self::TEST_DIR . '/logs/jobs.log/p0';
+		$files = \glob( $jobs_dir . '/*.log' );
+		$this->assertNotEmpty( $files );
+		$content = \file_get_contents( $files[0] );
+		$decoded = \json_decode( \trim( $content ), true );
+		$this->assertSame( 'remote_job', $decoded['type'] );
 	}
 
 	public function test_process_firehose_skips_non_job_entries(): void {
@@ -121,14 +128,16 @@ class JobRouterTest extends TestCase {
 		] );
 
 		JobRouter::process( $entry, 'firehose.log', $context );
-		$this->assertEmpty( $context['queue'] );
+		$jobs_dir = self::TEST_DIR . '/logs/jobs.log/p0';
+		$this->assertFalse( \is_dir( $jobs_dir ), 'Non-job entry should not create output' );
 	}
 
 	public function test_process_firehose_skips_invalid_json(): void {
 		$context = $this->make_context();
 
 		JobRouter::process( 'not-json{{{', 'firehose.log', $context );
-		$this->assertEmpty( $context['queue'] );
+		$jobs_dir = self::TEST_DIR . '/logs/jobs.log/p0';
+		$this->assertFalse( \is_dir( $jobs_dir ), 'Invalid JSON should not create output' );
 	}
 
 	public function test_process_firehose_rejects_invalid_handler_name(): void {
@@ -146,7 +155,8 @@ class JobRouterTest extends TestCase {
 		] );
 
 		JobRouter::process( $entry, 'firehose.log', $context );
-		$this->assertEmpty( $context['queue'], 'Invalid handler name should be rejected' );
+		$jobs_dir = self::TEST_DIR . '/logs/jobs.log/p0';
+		$this->assertFalse( \is_dir( $jobs_dir ), 'Invalid handler name should be rejected' );
 	}
 
 	public function test_process_firehose_rejects_non_array_message(): void {
@@ -161,7 +171,8 @@ class JobRouterTest extends TestCase {
 		] );
 
 		JobRouter::process( $entry, 'firehose.log', $context );
-		$this->assertEmpty( $context['queue'] );
+		$jobs_dir = self::TEST_DIR . '/logs/jobs.log/p0';
+		$this->assertFalse( \is_dir( $jobs_dir ), 'Non-array message should be rejected' );
 	}
 
 	public function test_process_jobintake_writes_directly(): void {
@@ -173,9 +184,6 @@ class JobRouterTest extends TestCase {
 		] );
 
 		JobRouter::process( $job_line, 'jobintake.log', $context );
-
-		// Jobintake entries go directly to jobs_log, not to queue.
-		$this->assertEmpty( $context['queue'] );
 
 		// Verify it was written to the jobs log.
 		$jobs_dir = self::TEST_DIR . '/logs/jobs.log/p0';
@@ -211,10 +219,9 @@ class JobRouterTest extends TestCase {
 		}
 	}
 
-	public function test_flush_writes_queued_jobs(): void {
+	public function test_process_writes_directly_to_jobs_log(): void {
 		$context = $this->make_context();
 
-		// Add entries to queue.
 		$entry = \wp_json_encode( [
 			'ts'  => \microtime( true ),
 			'n'   => 1,
@@ -226,13 +233,8 @@ class JobRouterTest extends TestCase {
 			],
 		] );
 		JobRouter::process( $entry, 'firehose.log', $context );
-		$this->assertCount( 1, $context['queue'] );
 
-		// Flush.
-		JobRouter::flush( $context );
-		$this->assertEmpty( $context['queue'], 'Queue should be empty after flush' );
-
-		// Verify output.
+		// Verify output written immediately (no flush required).
 		$jobs_dir = self::TEST_DIR . '/logs/jobs.log/p0';
 		$files    = \glob( $jobs_dir . '/*.log' );
 		$this->assertNotEmpty( $files );
@@ -247,23 +249,8 @@ class JobRouterTest extends TestCase {
 		$this->assertEmpty( $state );
 	}
 
-	public function test_cleanup_flushes_and_nulls(): void {
+	public function test_cleanup_nulls_jobs_log(): void {
 		$context = $this->make_context();
-
-		// Add a job entry to queue.
-		$entry = \wp_json_encode( [
-			'ts'  => \microtime( true ),
-			'n'   => 1,
-			'rid' => 'cleanup123',
-			'k'   => 'job',
-			'm'   => [
-				'handler'    => 'cleanup_handler',
-				'parameters' => [],
-			],
-		] );
-		JobRouter::process( $entry, 'firehose.log', $context );
-		$this->assertCount( 1, $context['queue'] );
-
 		JobRouter::cleanup( $context );
 		$this->assertNull( $context['jobs_log'] );
 	}
@@ -285,8 +272,13 @@ class JobRouterTest extends TestCase {
 		] );
 
 		JobRouter::process( $entry, 'firehose.log', $context );
-		$this->assertCount( 1, $context['queue'] );
-		$this->assertSame( $ts, $context['queue'][0]['ts'] );
+
+		$jobs_dir = self::TEST_DIR . '/logs/jobs.log/p0';
+		$files    = \glob( $jobs_dir . '/*.log' );
+		$this->assertNotEmpty( $files );
+		$content = \file_get_contents( $files[0] );
+		$decoded = \json_decode( \trim( $content ), true );
+		$this->assertSame( $ts, $decoded['ts'] );
 	}
 
 	public function test_process_jobintake_rejects_invalid_handler_name(): void {
@@ -368,6 +360,7 @@ class JobRouterTest extends TestCase {
 
 		JobRouter::process( $entry, 'firehose.log', $context );
 		// After full JSON decode, k is 'info' not 'job', so should be skipped.
-		$this->assertEmpty( $context['queue'] );
+		$jobs_dir = self::TEST_DIR . '/logs/jobs.log/p0';
+		$this->assertFalse( \is_dir( $jobs_dir ), 'False positive strpos should not create output' );
 	}
 }

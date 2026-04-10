@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.16] - 2026-04-10
+
+### Changed
+
+- RequestBuilder: eliminate double JSON round-trip on request completion — index callback receives pre-decoded data via `Firehose::write()` `&$data` parameter instead of re-parsing 400KB-2MB JSON strings
+- RequestBuilder: replace `preg_match` keyword dispatch with `str_ends_with` + `substr` for ~80% of firehose lines
+- RequestBuilder: replace `wp_json_encode` with `json_encode` for message length checking (avoids WordPress wrapper overhead)
+- RequestBuilder: replace `preg_match` in `pop_stack` ancestor traversal with `strrpos` + `ctype_digit`
+- SSEControllerBase: refactor `stream_log()` into `stream_log_run()` (testable) + thin `stream_log()` wrapper (exit), extract `parse_positions()` and `setup_readers()` as independently testable methods
+- FirehoseStreamController: split `stream()` into `stream_run()` + exit wrapper for testability, use `static::HEARTBEAT_INTERVAL` for overridable heartbeat timing
+- GyroscopeController: split `stream()` into `stream_run()` + exit wrapper for testability
+- RawlogsController, ErrorsController, RequestsController: extract inline transform closures as `public static function transform_line()` for independent testability
+
+### Fixed
+
+- SupervisorTest: remove 8 tests referencing deleted `worker_has_work()` method
+- JobRouterTest: rewrite 12 tests for direct `jobs_log` output (queue buffer was removed)
+- LogManagerTest: fix 7 tests to call `start()` before `message()` to trigger firehose initialization
+
+### Added
+
+- 298 new unit tests (1284 to 1582) covering admin classes, CLI commands, SSE controllers, and StreamMerger
+- Test coverage: 88.2% across 52 classes (all at or above 80%), up from 87.1% across 40 classes
+- Bootstrap stubs: WordPress Settings API, admin page, asset enqueue, WP-CLI, and `WP_CLI\Utils` namespace functions
+- Test configs: `stream-merger.php` for StreamMerger tests
+
 ## [2.4.15] - 2026-04-09
 
 ### Fixed

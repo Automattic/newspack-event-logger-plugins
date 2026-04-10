@@ -358,37 +358,46 @@ abstract class SSEControllerBase extends \WP_REST_Controller {
 	 * @return \WP_Error|void
 	 */
 	protected function stream_log( \WP_REST_Request $request, array $config, callable $transform ) {
-		$digest_interval = $request->get_param( 'interval' );
-		$log_file        = $config['log_file'];
-		$event_name      = $config['event_name'];
-		$tail_bytes      = $config['tail_bytes'] ?? 1048576;
-		$batch_threshold = $config['batch_threshold'] ?? 50;
-		$config_extras   = $config['config_extras'] ?? [];
-
-		$context = $this->start_sse_stream( [
-			'num_partitions' => 0,
-			'interval'       => $digest_interval,
-		] );
-
-		if ( \is_wp_error( $context ) ) {
-			return $context;
+		$result = $this->stream_log_run( $request, $config, $transform );
+		if ( \is_wp_error( $result ) ) {
+			return $result;
 		}
+		exit;
+	}
 
-		$log_base       = $context['log_base'];
-		$num_partitions = $context['num_partitions'];
-		$saved_pos_raw  = $request->get_param( 'positions' );
-		if ( \is_string( $saved_pos_raw ) && \strlen( $saved_pos_raw ) > 4096 ) {
-			$saved_pos_raw = null;
+	/**
+	 * Parse and validate saved positions from request parameter.
+	 *
+	 * @param string|null $raw            Raw positions parameter.
+	 * @param int         $num_partitions Number of partitions.
+	 * @return array|null Validated positions array or null.
+	 */
+	protected function parse_positions( ?string $raw, int $num_partitions ): ?array {
+		if ( \is_string( $raw ) && \strlen( $raw ) > 4096 ) {
+			$raw = null;
 		}
-		$saved_pos = ! empty( $saved_pos_raw ) ? \json_decode( $saved_pos_raw, true ) : null;
+		$saved_pos = ! empty( $raw ) ? \json_decode( $raw, true ) : null;
 		if ( \is_array( $saved_pos ) && \count( $saved_pos ) > $num_partitions ) {
 			$saved_pos = \array_slice( $saved_pos, 0, $num_partitions );
 		}
+		return $saved_pos;
+	}
 
-		// Set up readers with resume or tail-seek.
+	/**
+	 * Set up firehose readers with resume or tail-seek positioning.
+	 *
+	 * @param string     $log_base   Log base directory.
+	 * @param string     $log_file   Log file directory name.
+	 * @param int        $num_partitions Number of partitions.
+	 * @param array|null $saved_pos  Saved positions from client.
+	 * @param int        $tail_bytes Bytes to tail on first connect.
+	 * @return array{readers: FirehoseReader[], file_handles: array, needs_skip: array}
+	 */
+	protected function setup_readers( string $log_base, string $log_file, int $num_partitions, ?array $saved_pos, int $tail_bytes ): array {
 		$readers      = [];
 		$file_handles = [];
 		$needs_skip   = [];
+
 		for ( $p = 0; $p < $num_partitions; $p++ ) {
 			$firehose = new Firehose( "{$log_base}/{$log_file}", $p );
 			$reader   = new FirehoseReader( $firehose );
@@ -435,6 +444,45 @@ abstract class SSEControllerBase extends \WP_REST_Controller {
 				}
 			}
 		}
+
+		return [
+			'readers'      => $readers,
+			'file_handles' => $file_handles,
+		];
+	}
+
+	/**
+	 * Run the stream log setup, polling loop, and cleanup (without exit).
+	 *
+	 * @param \WP_REST_Request $request    REST request.
+	 * @param array            $config     Stream config (see stream_log).
+	 * @param callable         $transform  Line transformer callback.
+	 * @return \WP_Error|void WP_Error if rate limited, void on normal completion.
+	 */
+	protected function stream_log_run( \WP_REST_Request $request, array $config, callable $transform ) {
+		$digest_interval = $request->get_param( 'interval' );
+		$log_file        = $config['log_file'];
+		$event_name      = $config['event_name'];
+		$tail_bytes      = $config['tail_bytes'] ?? 1048576;
+		$batch_threshold = $config['batch_threshold'] ?? 50;
+		$config_extras   = $config['config_extras'] ?? [];
+
+		$context = $this->start_sse_stream( [
+			'num_partitions' => 0,
+			'interval'       => $digest_interval,
+		] );
+
+		if ( \is_wp_error( $context ) ) {
+			return $context;
+		}
+
+		$log_base       = $context['log_base'];
+		$num_partitions = $context['num_partitions'];
+		$saved_pos      = $this->parse_positions( $request->get_param( 'positions' ), $num_partitions );
+
+		$setup        = $this->setup_readers( $log_base, $log_file, $num_partitions, $saved_pos, $tail_bytes );
+		$readers      = $setup['readers'];
+		$file_handles = $setup['file_handles'];
 
 		$this->send_sse_event( 'config', \array_merge( [
 			'num_partitions' => $num_partitions,
@@ -513,6 +561,5 @@ abstract class SSEControllerBase extends \WP_REST_Controller {
 			$reader->close();
 		}
 		$this->end_sse_stream();
-		exit;
 	}
 }

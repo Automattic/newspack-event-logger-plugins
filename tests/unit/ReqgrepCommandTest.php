@@ -1,0 +1,720 @@
+<?php
+/**
+ * Tests for ReqgrepCommand (firehose log grep with request reconstruction).
+ *
+ * @package Event_Logger
+ */
+
+namespace Newspack_Event_Logger\Tests\Unit;
+
+use PHPUnit\Framework\TestCase;
+use Newspack_Performance_Logger\CLI\ReqgrepCommand;
+
+#[\PHPUnit\Framework\Attributes\CoversClass( ReqgrepCommand::class )]
+class ReqgrepCommandTest extends TestCase {
+
+	private ReqgrepCommand $cmd;
+
+	/** @var \ReflectionMethod */
+	private \ReflectionMethod $process_line;
+
+	/** @var \ReflectionMethod */
+	private \ReflectionMethod $format_entry;
+
+	/** @var \ReflectionMethod */
+	private \ReflectionMethod $output_request;
+
+	/** @var \ReflectionMethod */
+	private \ReflectionMethod $output_remaining;
+
+	protected function setUp(): void {
+		parent::setUp();
+		\WP_CLI::reset();
+	}
+
+	/**
+	 * Create a fresh command with accessible private methods.
+	 *
+	 * @param string $pattern Search pattern.
+	 * @param bool   $raw     Raw output mode.
+	 * @param bool   $incomplete Show incomplete requests.
+	 * @param int    $bucket_size History bucket size.
+	 * @param int    $num_buckets Number of history buckets.
+	 * @return ReqgrepCommand
+	 */
+	private function make_cmd(
+		string $pattern = '.',
+		bool $raw = false,
+		bool $incomplete = false,
+		int $bucket_size = 250,
+		int $num_buckets = 10
+	): ReqgrepCommand {
+		$cmd = new ReqgrepCommand();
+
+		// Set private properties via reflection.
+		$set = function ( string $prop, $value ) use ( $cmd ) {
+			$ref = new \ReflectionProperty( $cmd, $prop );
+			$ref->setAccessible( true );
+			$ref->setValue( $cmd, $value );
+		};
+
+		$set( 'pattern', $pattern );
+		$set( 'pattern_regex', '/' . \preg_quote( $pattern, '/' ) . '/i' );
+		$set( 'raw', $raw );
+		$set( 'incomplete', $incomplete );
+		$set( 'bucket_size', $bucket_size );
+		$set( 'num_buckets', $num_buckets );
+		$set( 'time', \time() );
+
+		$this->process_line = new \ReflectionMethod( $cmd, 'process_line' );
+		$this->process_line->setAccessible( true );
+
+		$this->format_entry = new \ReflectionMethod( $cmd, 'format_entry' );
+		$this->format_entry->setAccessible( true );
+
+		$this->output_request = new \ReflectionMethod( $cmd, 'output_request' );
+		$this->output_request->setAccessible( true );
+
+		$this->output_remaining = new \ReflectionMethod( $cmd, 'output_remaining' );
+		$this->output_remaining->setAccessible( true );
+
+		$this->cmd = $cmd;
+		return $cmd;
+	}
+
+	private function get_prop( string $prop ) {
+		$ref = new \ReflectionProperty( $this->cmd, $prop );
+		$ref->setAccessible( true );
+		return $ref->getValue( $this->cmd );
+	}
+
+	private function set_prop( string $prop, $value ): void {
+		$ref = new \ReflectionProperty( $this->cmd, $prop );
+		$ref->setAccessible( true );
+		$ref->setValue( $this->cmd, $value );
+	}
+
+	private function line( string $rid, string $key, $message = '', int $n = 1, float $ts = 0, array $extra = [] ): string {
+		$data = [ 'n' => $n, 'rid' => $rid, 'k' => $key, 'ts' => $ts ?: \microtime( true ) ];
+		if ( '' !== $message ) {
+			$data['m'] = $message;
+		}
+		return \wp_json_encode( \array_merge( $data, $extra ) );
+	}
+
+	// ── process_line: basic request tracking ─────────────────────────────
+
+	public function test_process_line_skips_empty(): void {
+		$this->make_cmd();
+		$this->process_line->invoke( $this->cmd, '' );
+		$this->assertEmpty( $this->get_prop( 'requests' ) );
+	}
+
+	public function test_process_line_skips_invalid_json(): void {
+		$this->make_cmd();
+		$this->process_line->invoke( $this->cmd, 'not-json{{{' );
+		$this->assertEmpty( $this->get_prop( 'requests' ) );
+	}
+
+	public function test_process_line_skips_entry_without_rid(): void {
+		$this->make_cmd();
+		$this->process_line->invoke( $this->cmd, '{"k":"test","n":1}' );
+		$this->assertEmpty( $this->get_prop( 'requests' ) );
+	}
+
+	public function test_process_line_tracks_matching_request(): void {
+		$this->make_cmd( '/test' );
+
+		$line = $this->line( 'r1', 'request', 'GET /test/page', 1 );
+		$this->process_line->invoke( $this->cmd, $line );
+
+		$requests = $this->get_prop( 'requests' );
+		$this->assertArrayHasKey( 'r1', $requests );
+		$this->assertCount( 1, $requests['r1'] );
+	}
+
+	public function test_process_line_accumulates_entries_for_tracked_request(): void {
+		$this->make_cmd( '/test' );
+
+		$this->process_line->invoke( $this->cmd, $this->line( 'r1', 'request', 'GET /test/page', 1 ) );
+		$this->process_line->invoke( $this->cmd, $this->line( 'r1', 'hook (start)', 'init', 2 ) );
+		$this->process_line->invoke( $this->cmd, $this->line( 'r1', 'hook (complete)', '', 3 ) );
+
+		$requests = $this->get_prop( 'requests' );
+		$this->assertCount( 3, $requests['r1'] );
+	}
+
+	public function test_process_line_outputs_on_complete(): void {
+		$this->make_cmd( '/test' );
+
+		$this->process_line->invoke( $this->cmd, $this->line( 'r1', 'request', 'GET /test/page', 1 ) );
+
+		\ob_start();
+		$this->process_line->invoke( $this->cmd, $this->line( 'r1', 'process (complete)', '', 2, 0, [ 'duration_ms' => 42 ] ) );
+		$output = \ob_get_clean();
+
+		// Request should be removed from tracking after output.
+		$this->assertEmpty( $this->get_prop( 'requests' ) );
+		$this->assertNotEmpty( $output );
+	}
+
+	public function test_process_line_does_not_track_non_matching(): void {
+		$this->make_cmd( '/calendar' );
+
+		$this->process_line->invoke( $this->cmd, $this->line( 'r1', 'request', 'GET /about', 1 ) );
+
+		$requests = $this->get_prop( 'requests' );
+		$this->assertArrayNotHasKey( 'r1', $requests );
+	}
+
+	public function test_process_line_stores_non_matching_in_history(): void {
+		$this->make_cmd( '/calendar' );
+
+		$this->process_line->invoke( $this->cmd, $this->line( 'r1', 'request', 'GET /about', 1 ) );
+
+		$history = $this->get_prop( 'history' );
+		$recent  = \end( $history );
+		$this->assertArrayHasKey( 'r1', $recent );
+	}
+
+	// ── process_line: history bucket rotation ────────────────────────────
+
+	public function test_history_rotates_when_bucket_full(): void {
+		$this->make_cmd( '/match-nothing-ever', false, false, 5, 3 );
+
+		// Fill a bucket past the threshold.
+		for ( $i = 0; $i < 10; $i++ ) {
+			$this->process_line->invoke( $this->cmd, $this->line( "r{$i}", 'request', "GET /page/{$i}", 1 ) );
+		}
+
+		$history = $this->get_prop( 'history' );
+		$this->assertGreaterThan( 1, \count( $history ), 'History should have rotated' );
+	}
+
+	public function test_history_evicts_oldest_bucket(): void {
+		$this->make_cmd( '/match-nothing-ever', false, false, 3, 2 );
+
+		// Fill enough to trigger multiple rotations.
+		for ( $i = 0; $i < 20; $i++ ) {
+			$this->process_line->invoke( $this->cmd, $this->line( "r{$i}", 'request', "GET /page/{$i}", 1 ) );
+		}
+
+		$history = $this->get_prop( 'history' );
+		$this->assertLessThanOrEqual( 2, \count( $history ), 'Should not exceed num_buckets' );
+	}
+
+	// ── process_line: history recall ─────────────────────────────────────
+
+	public function test_process_line_recovers_start_from_history(): void {
+		$this->make_cmd( '/target' );
+
+		// First line goes to history (doesn't match pattern).
+		$this->process_line->invoke( $this->cmd, $this->line( 'r1', 'process (start)', '1234 on host', 1 ) );
+
+		// Second line matches pattern — should pull r1's start from history.
+		$this->process_line->invoke( $this->cmd, $this->line( 'r1', 'request', 'GET /target/page', 2 ) );
+
+		$requests = $this->get_prop( 'requests' );
+		$this->assertArrayHasKey( 'r1', $requests );
+		$this->assertCount( 2, $requests['r1'], 'Should include the start line from history' );
+	}
+
+	// ── process_line: bounds checking ────────────────────────────────────
+
+	public function test_process_line_caps_lines_per_request(): void {
+		$this->make_cmd( '.' );
+
+		// Track a request.
+		$this->process_line->invoke( $this->cmd, $this->line( 'r1', 'request', 'GET /', 1 ) );
+
+		// Exceed MAX_LINES_PER_REQUEST (20000) — test with reflection override.
+		$ref = new \ReflectionProperty( $this->cmd, 'requests' );
+		$ref->setAccessible( true );
+		$current = $ref->getValue( $this->cmd );
+		$current['r1'] = \array_fill( 0, 20000, '{}' );
+		$ref->setValue( $this->cmd, $current );
+
+		// This line should not be added.
+		$this->process_line->invoke( $this->cmd, $this->line( 'r1', 'hook (start)', 'extra', 20001 ) );
+
+		$requests = $this->get_prop( 'requests' );
+		$this->assertCount( 20000, $requests['r1'] );
+	}
+
+	public function test_process_line_evicts_oldest_when_too_many_requests(): void {
+		$this->make_cmd( '.' );
+
+		// Track 10000 requests.
+		for ( $i = 0; $i < 10000; $i++ ) {
+			$this->process_line->invoke( $this->cmd, $this->line( "r{$i}", 'request', 'GET /', 1 ) );
+		}
+
+		// One more should evict the oldest.
+		$this->process_line->invoke( $this->cmd, $this->line( 'r10000', 'request', 'GET /', 1 ) );
+
+		$requests = $this->get_prop( 'requests' );
+		$this->assertCount( 10000, $requests );
+		$this->assertArrayNotHasKey( 'r0', $requests );
+	}
+
+	// ── process_line: exact rid match ────────────────────────────────────
+
+	public function test_process_line_matches_exact_rid(): void {
+		$this->make_cmd( 'abc123' );
+
+		$this->process_line->invoke( $this->cmd, $this->line( 'abc123', 'request', 'GET /unrelated', 1 ) );
+
+		$requests = $this->get_prop( 'requests' );
+		$this->assertArrayHasKey( 'abc123', $requests );
+	}
+
+	// ── process_line: incomplete mode ────────────────────────────────────
+
+	public function test_process_line_incomplete_mode_does_not_output_on_complete(): void {
+		$this->make_cmd( '.', false, true );
+
+		$this->process_line->invoke( $this->cmd, $this->line( 'r1', 'request', 'GET /', 1 ) );
+
+		\ob_start();
+		$this->process_line->invoke( $this->cmd, $this->line( 'r1', 'process (complete)', '', 2 ) );
+		$output = \ob_get_clean();
+
+		// In incomplete mode, complete requests are not output inline.
+		$this->assertEmpty( $output );
+		// But the request should still be removed.
+		$this->assertEmpty( $this->get_prop( 'requests' ) );
+	}
+
+	// ── output_request: raw mode ─────────────────────────────────────────
+
+	public function test_output_request_raw(): void {
+		$this->make_cmd( '.', true );
+
+		$lines = [
+			'{"n":1,"rid":"r1","k":"request","m":"GET /"}',
+			'{"n":2,"rid":"r1","k":"process (complete)"}',
+		];
+
+		\ob_start();
+		$this->output_request->invoke( $this->cmd, $lines );
+		$output = \ob_get_clean();
+
+		$this->assertStringContainsString( $lines[0], $output );
+		$this->assertStringContainsString( $lines[1], $output );
+	}
+
+	// ── output_remaining ─────────────────────────────────────────────────
+
+	public function test_output_remaining_flushes_incomplete(): void {
+		$this->make_cmd( '.' );
+
+		$this->process_line->invoke( $this->cmd, $this->line( 'r1', 'request', 'GET /', 1 ) );
+
+		\ob_start();
+		$this->output_remaining->invoke( $this->cmd );
+		$output = \ob_get_clean();
+
+		$this->assertStringContainsString( '[incomplete]', $output );
+	}
+
+	// ── format_entry ─────────────────────────────────────────────────────
+
+	public function test_format_entry_basic(): void {
+		$this->make_cmd();
+
+		$entry  = [ 'n' => 5, 'ts' => 1700000000.5, 'k' => 'hook (start)', 'm' => 'init', 'rid' => 'r1' ];
+		$result = $this->format_entry->invoke( $this->cmd, $entry );
+
+		$this->assertStringContainsString( 'hook (start)', $result );
+		$this->assertStringContainsString( 'init', $result );
+	}
+
+	public function test_format_entry_indentation_increases_on_start(): void {
+		$this->make_cmd();
+
+		$this->format_entry->invoke( $this->cmd, [ 'n' => 1, 'ts' => 1700000000.0, 'k' => 'process (start)', 'm' => '', 'rid' => 'r1' ] );
+		$indent_after = $this->get_prop( 'fmt_indent' );
+
+		$this->assertSame( 4, $indent_after );
+	}
+
+	public function test_format_entry_indentation_decreases_on_complete(): void {
+		$this->make_cmd();
+
+		// Start increases indent.
+		$this->format_entry->invoke( $this->cmd, [ 'n' => 1, 'ts' => 1700000000.0, 'k' => 'hook (start)', 'm' => 'init', 'rid' => 'r1' ] );
+		$this->assertSame( 4, $this->get_prop( 'fmt_indent' ) );
+
+		// Complete decreases indent.
+		$this->format_entry->invoke( $this->cmd, [ 'n' => 2, 'ts' => 1700000000.1, 'k' => 'hook (complete)', 'm' => '', 'rid' => 'r1' ] );
+		$this->assertSame( 0, $this->get_prop( 'fmt_indent' ) );
+	}
+
+	public function test_format_entry_indent_never_goes_negative(): void {
+		$this->make_cmd();
+
+		// Complete without matching start.
+		$this->format_entry->invoke( $this->cmd, [ 'n' => 1, 'ts' => 1700000000.0, 'k' => 'hook (complete)', 'm' => '', 'rid' => 'r1' ] );
+		$this->assertSame( 0, $this->get_prop( 'fmt_indent' ) );
+	}
+
+	public function test_format_entry_duration_suffix(): void {
+		$this->make_cmd();
+
+		$entry  = [ 'n' => 1, 'ts' => 1700000000.0, 'k' => 'hook (complete)', 'rid' => 'r1', 'duration_ms' => 42.5 ];
+		$result = $this->format_entry->invoke( $this->cmd, $entry );
+
+		$this->assertStringContainsString( '42.50ms', $result );
+	}
+
+	public function test_format_entry_peak_mb_suffix(): void {
+		$this->make_cmd();
+
+		$entry  = [ 'n' => 1, 'ts' => 1700000000.0, 'k' => 'memory', 'rid' => 'r1', 'm' => '', 'peak_mb' => 64 ];
+		$result = $this->format_entry->invoke( $this->cmd, $entry );
+
+		$this->assertStringContainsString( '[64MB]', $result );
+	}
+
+	public function test_format_entry_synthesizes_request_id_on_first_line(): void {
+		$this->make_cmd();
+
+		$entry  = [ 'n' => 1, 'ts' => 1700000000.0, 'k' => 'process (start)', 'm' => '1234 on host', 'rid' => 'abc123' ];
+		$result = $this->format_entry->invoke( $this->cmd, $entry );
+
+		$this->assertStringContainsString( 'request_id:abc123', $result );
+	}
+
+	public function test_format_entry_timestamp_shown_when_changes(): void {
+		$this->make_cmd();
+
+		$result1 = $this->format_entry->invoke( $this->cmd, [ 'n' => 1, 'ts' => 1700000000.0, 'k' => 'a', 'rid' => 'r1' ] );
+		$result2 = $this->format_entry->invoke( $this->cmd, [ 'n' => 2, 'ts' => 1700000000.0, 'k' => 'b', 'rid' => 'r1' ] );
+		$result3 = $this->format_entry->invoke( $this->cmd, [ 'n' => 3, 'ts' => 1700000000.2, 'k' => 'c', 'rid' => 'r1' ] );
+
+		// First line should have timestamp.
+		$this->assertStringContainsString( '2023-11-14', $result1 );
+		// Same 0.1s bucket — no timestamp.
+		$this->assertStringNotContainsString( '2023-11-14', $result2 );
+		// Different 0.1s bucket — timestamp shown again.
+		$this->assertStringContainsString( '2023-11-14', $result3 );
+	}
+
+	public function test_format_entry_multiline_message_aligned(): void {
+		$this->make_cmd();
+
+		$entry  = [ 'n' => 1, 'ts' => 1700000000.0, 'k' => 'test', 'm' => "line1\nline2\nline3", 'rid' => 'r1' ];
+		$result = $this->format_entry->invoke( $this->cmd, $entry );
+
+		$lines = \explode( "\n", $result );
+		// Should have multiple lines (the message + request_id since n=1).
+		$this->assertGreaterThan( 1, \count( $lines ) );
+	}
+
+	public function test_format_entry_number_reset_inserts_separator(): void {
+		$this->make_cmd();
+
+		$this->format_entry->invoke( $this->cmd, [ 'n' => 10, 'ts' => 1700000000.0, 'k' => 'a', 'rid' => 'r1' ] );
+		$result = $this->format_entry->invoke( $this->cmd, [ 'n' => 1, 'ts' => 1700000001.0, 'k' => 'b', 'rid' => 'r2' ] );
+
+		$this->assertStringContainsString( '####', $result );
+	}
+
+	public function test_format_entry_array_message(): void {
+		$this->make_cmd();
+
+		$entry  = [ 'n' => 1, 'ts' => 1700000000.0, 'k' => 'memory', 'rid' => 'r1', 'm' => [ 'peak' => 64 ] ];
+		$result = $this->format_entry->invoke( $this->cmd, $entry );
+
+		$this->assertStringContainsString( '"peak"', $result );
+	}
+
+	public function test_format_entry_elapsed_dots(): void {
+		$this->make_cmd();
+
+		// First entry at t=100.
+		$this->format_entry->invoke( $this->cmd, [ 'n' => 1, 'ts' => 1700000000.0, 'k' => 'a', 'rid' => 'r1' ] );
+
+		// Next entry 3 seconds later — should have 2 dot lines for the gap.
+		$result = $this->format_entry->invoke( $this->cmd, [ 'n' => 2, 'ts' => 1700000003.0, 'k' => 'b', 'rid' => 'r1' ] );
+
+		$dot_count = \substr_count( $result, '.' );
+		// The dots themselves plus any timestamp dots — at minimum we should see the elapsed dots.
+		$this->assertGreaterThan( 0, $dot_count );
+	}
+
+	// ── get_firehose: caching ───────────────────────────────────────────
+
+	public function test_get_firehose_returns_firehose_instance(): void {
+		$this->make_cmd();
+
+		// Create a temp firehose directory.
+		$base = '/tmp/test-reqgrep-firehose-' . \getmypid();
+		@\mkdir( "{$base}/p0", 0755, true );
+
+		$this->set_prop( 'base_dir', $base );
+
+		$get_firehose = new \ReflectionMethod( $this->cmd, 'get_firehose' );
+		$get_firehose->setAccessible( true );
+
+		$firehose = $get_firehose->invoke( $this->cmd, 0 );
+		$this->assertInstanceOf( \Newspack_Event_Logger\Firehose::class, $firehose );
+
+		// Second call should return cached instance.
+		$firehose2 = $get_firehose->invoke( $this->cmd, 0 );
+		$this->assertSame( $firehose, $firehose2, 'get_firehose should cache instances' );
+
+		// Clean up.
+		@\rmdir( "{$base}/p0" );
+		@\rmdir( $base );
+	}
+
+	// ── cat_mode: full read through firehose segments ───────────────────
+
+	public function test_cat_mode_reads_all_segments(): void {
+		$this->make_cmd( '/test' );
+
+		$base = '/tmp/test-reqgrep-cat-' . \getmypid();
+		@\mkdir( "{$base}/p0", 0755, true );
+
+		$ts = 1700000000.0;
+		$lines = [
+			\wp_json_encode( [ 'n' => 1, 'rid' => 'r1', 'k' => 'process (start)', 'm' => '1 on host', 'ts' => $ts ] ),
+			\wp_json_encode( [ 'n' => 2, 'rid' => 'r1', 'k' => 'request', 'm' => 'GET /test/page', 'ts' => $ts + 0.01 ] ),
+			\wp_json_encode( [ 'n' => 3, 'rid' => 'r1', 'k' => 'process (complete)', 'ts' => $ts + 0.02, 'duration_ms' => 42 ] ),
+		];
+		\file_put_contents( "{$base}/p0/0.log", \implode( "\n", $lines ) . "\n" );
+
+		$this->set_prop( 'base_dir', $base );
+		$this->set_prop( 'num_partitions', 1 );
+
+		$cat_mode = new \ReflectionMethod( $this->cmd, 'cat_mode' );
+		$cat_mode->setAccessible( true );
+
+		\ob_start();
+		$cat_mode->invoke( $this->cmd );
+		$output = \ob_get_clean();
+
+		$this->assertStringContainsString( 'process (start)', $output );
+		$this->assertStringContainsString( 'GET /test/page', $output );
+		$this->assertStringContainsString( '42.00ms', $output );
+
+		// Clean up.
+		@\unlink( "{$base}/p0/0.log" );
+		@\rmdir( "{$base}/p0" );
+		@\rmdir( $base );
+	}
+
+	public function test_cat_mode_outputs_incomplete_at_end(): void {
+		$this->make_cmd( '/test' );
+
+		$base = '/tmp/test-reqgrep-cat-inc-' . \getmypid();
+		@\mkdir( "{$base}/p0", 0755, true );
+
+		$ts = 1700000000.0;
+		// Request without process (complete) — should be flushed as incomplete at end.
+		$lines = [
+			\wp_json_encode( [ 'n' => 1, 'rid' => 'r1', 'k' => 'process (start)', 'm' => '1 on host', 'ts' => $ts ] ),
+			\wp_json_encode( [ 'n' => 2, 'rid' => 'r1', 'k' => 'request', 'm' => 'GET /test/page', 'ts' => $ts + 0.01 ] ),
+		];
+		\file_put_contents( "{$base}/p0/0.log", \implode( "\n", $lines ) . "\n" );
+
+		$this->set_prop( 'base_dir', $base );
+		$this->set_prop( 'num_partitions', 1 );
+
+		$cat_mode = new \ReflectionMethod( $this->cmd, 'cat_mode' );
+		$cat_mode->setAccessible( true );
+
+		\ob_start();
+		$cat_mode->invoke( $this->cmd );
+		$output = \ob_get_clean();
+
+		$this->assertStringContainsString( '[incomplete]', $output );
+
+		// Clean up.
+		@\unlink( "{$base}/p0/0.log" );
+		@\rmdir( "{$base}/p0" );
+		@\rmdir( $base );
+	}
+
+	// ── __invoke: path validation ───────────────────────────────────────
+
+	public function test_invoke_rejects_invalid_path(): void {
+		$cmd = new ReqgrepCommand();
+
+		$this->expectException( \RuntimeException::class );
+		$this->expectExceptionMessage( 'Invalid path' );
+
+		$cmd( [ 'test' ], [ 'path' => '/nonexistent/path/that/does/not/exist' ] );
+	}
+
+	// ── process_line: stale request cleanup ─────────────────────────────
+
+	public function test_process_line_cleans_stale_requests(): void {
+		$this->make_cmd( '.' );
+
+		// Track a request.
+		$this->process_line->invoke( $this->cmd, $this->line( 'stale-r1', 'request', 'GET /', 1 ) );
+
+		// Set the request's timestamp to 20 minutes ago.
+		$timestamps = $this->get_prop( 'timestamps' );
+		$timestamps['stale-r1'] = \time() - 1200; // 20 min ago, > 900s stale threshold.
+		$this->set_prop( 'timestamps', $timestamps );
+
+		// Set line_count to 10000 so next increment (10001) triggers cleanup.
+		$this->set_prop( 'line_count', 10000 );
+
+		// One more line triggers cleanup.
+		\ob_start();
+		$this->process_line->invoke( $this->cmd, $this->line( 'other-r2', 'request', 'GET /other', 1 ) );
+		$output = \ob_get_clean();
+
+		// Stale request should have been flushed.
+		$this->assertStringContainsString( '[incomplete]', $output );
+		$requests = $this->get_prop( 'requests' );
+		$this->assertArrayNotHasKey( 'stale-r1', $requests, 'Stale request should be removed' );
+	}
+
+	// ── output_request: non-JSON line fallback ──────────────────────────
+
+	public function test_output_request_non_json_line_echoed_as_is(): void {
+		$this->make_cmd();
+
+		$lines = [
+			'this is not JSON at all',
+			\wp_json_encode( [ 'n' => 2, 'rid' => 'r1', 'k' => 'request', 'm' => 'GET /', 'ts' => 1700000000.0 ] ),
+		];
+
+		\ob_start();
+		$this->output_request->invoke( $this->cmd, $lines );
+		$output = \ob_get_clean();
+
+		$this->assertStringContainsString( 'this is not JSON at all', $output );
+		$this->assertStringContainsString( 'request', $output );
+	}
+
+	// ── process_line: history warning when start not found ──────────────
+
+	public function test_history_warning_when_start_not_in_history(): void {
+		// Use small buckets that will be evicted quickly.
+		$this->make_cmd( '/target', false, false, 2, 2 );
+
+		// Fill history buckets with unrelated data to push out old entries.
+		for ( $i = 0; $i < 20; $i++ ) {
+			$this->process_line->invoke( $this->cmd, $this->line( "fill-{$i}", 'request', "GET /unrelated/{$i}", 1 ) );
+		}
+
+		// Now match a line with n > 1 (not the start). History has been rotated,
+		// so the original start should be gone.
+		\WP_CLI::reset();
+		$this->process_line->invoke( $this->cmd, $this->line( 'late-r1', 'request', 'GET /target/page', 5, 0, [] ) );
+
+		$warnings = \array_filter( \WP_CLI::$log, fn( $e ) => 'warning' === $e['level'] );
+		$this->assertNotEmpty( $warnings, 'Should warn when request start not found in history' );
+	}
+
+	// ── process_line: new matching request complete on same line ─────────
+
+	public function test_new_matching_request_outputs_on_complete_line(): void {
+		$this->make_cmd( '/test' );
+
+		// A single line that both matches AND is process (complete).
+		$line = $this->line( 'r1', 'process (complete)', 'GET /test', 1, 0, [ 'duration_ms' => 10 ] );
+
+		\ob_start();
+		$this->process_line->invoke( $this->cmd, $line );
+		$output = \ob_get_clean();
+
+		// Should output the request immediately.
+		$this->assertNotEmpty( $output, 'Complete line that matches should output immediately' );
+		$this->assertEmpty( $this->get_prop( 'requests' ), 'Request should be removed after output' );
+	}
+
+	// ── process_line: history MAX_LINES_PER_REQUEST_IN_HISTORY ──────────
+
+	public function test_history_caps_lines_per_request(): void {
+		$this->make_cmd( '/match-nothing', false, false, 100000, 2 );
+
+		// Set up a request in the current history bucket that's at the cap.
+		$history = $this->get_prop( 'history' );
+		$recent_idx = \count( $history ) - 1;
+		$history[ $recent_idx ]['capped-r1'] = \array_fill( 0, 10000, '{}' );
+		$this->set_prop( 'history', $history );
+
+		// This line for the same request should not be added (at cap).
+		$this->process_line->invoke( $this->cmd, $this->line( 'capped-r1', 'extra', 'more data', 10001 ) );
+
+		$history = $this->get_prop( 'history' );
+		$recent_idx = \count( $history ) - 1;
+		$this->assertCount( 10000, $history[ $recent_idx ]['capped-r1'], 'History should cap at MAX_LINES_PER_REQUEST_IN_HISTORY' );
+	}
+
+	// ── output_request: raw mode with multiple lines ────────────────────
+
+	public function test_output_request_formatted_mode(): void {
+		$this->make_cmd( '.', false );
+
+		$lines = [
+			\wp_json_encode( [ 'n' => 1, 'rid' => 'r1', 'k' => 'process (start)', 'm' => '1 on host', 'ts' => 1700000000.0 ] ),
+			\wp_json_encode( [ 'n' => 2, 'rid' => 'r1', 'k' => 'request', 'm' => 'GET /', 'ts' => 1700000000.1 ] ),
+			\wp_json_encode( [ 'n' => 3, 'rid' => 'r1', 'k' => 'process (complete)', 'ts' => 1700000000.2, 'duration_ms' => 42 ] ),
+		];
+
+		\ob_start();
+		$this->output_request->invoke( $this->cmd, $lines );
+		$output = \ob_get_clean();
+
+		$this->assertStringContainsString( 'process (start)', $output );
+		$this->assertStringContainsString( 'request_id:r1', $output );
+		$this->assertStringContainsString( '42.00ms', $output );
+	}
+
+	// ── cat_mode: no partitions — no output ─────────────────────────────
+
+	public function test_cat_mode_with_empty_partition(): void {
+		$this->make_cmd( '/test' );
+
+		$base = '/tmp/test-reqgrep-empty-' . \getmypid();
+		@\mkdir( "{$base}/p0", 0755, true );
+
+		// Empty segment file.
+		\file_put_contents( "{$base}/p0/0.log", '' );
+
+		$this->set_prop( 'base_dir', $base );
+		$this->set_prop( 'num_partitions', 1 );
+
+		$cat_mode = new \ReflectionMethod( $this->cmd, 'cat_mode' );
+		$cat_mode->setAccessible( true );
+
+		\ob_start();
+		$cat_mode->invoke( $this->cmd );
+		$output = \ob_get_clean();
+
+		// No data, so no output.
+		$this->assertEmpty( \trim( $output ) );
+
+		// Clean up.
+		@\unlink( "{$base}/p0/0.log" );
+		@\rmdir( "{$base}/p0" );
+		@\rmdir( $base );
+	}
+
+	// ── __invoke: path validation ───────────────────────────────────────
+
+	public function test_invoke_path_must_be_within_logs_dir(): void {
+		$cmd = new ReqgrepCommand();
+
+		// Create a temp dir OUTSIDE the logs directory.
+		$outside_dir = '/tmp/test-reqgrep-outside-' . \getmypid();
+		@\mkdir( $outside_dir, 0755, true );
+
+		$this->expectException( \RuntimeException::class );
+		$this->expectExceptionMessage( 'Path must be within the logs directory' );
+
+		try {
+			$cmd( [ 'test' ], [ 'path' => $outside_dir ] );
+		} finally {
+			@\rmdir( $outside_dir );
+		}
+	}
+}

@@ -71,6 +71,20 @@ class GyroscopeController extends SSEControllerBase {
 	 * @return \WP_Error|void WP_Error if rate limited.
 	 */
 	public function stream( $request ) {
+		$result = $this->stream_run( $request );
+		if ( \is_wp_error( $result ) ) {
+			return $result;
+		}
+		exit;
+	}
+
+	/**
+	 * Run gyroscope stream setup, polling loop, and cleanup (without exit).
+	 *
+	 * @param \WP_REST_Request $request Request object.
+	 * @return \WP_Error|void WP_Error if rate limited, void on normal completion.
+	 */
+	protected function stream_run( \WP_REST_Request $request ) {
 		$digest_interval = $request->get_param( 'interval' );
 
 		// Start SSE stream with slot management.
@@ -185,6 +199,5 @@ class GyroscopeController extends SSEControllerBase {
 			$reader->close();
 		}
 		$this->end_sse_stream();
-		exit;
 	}
 }

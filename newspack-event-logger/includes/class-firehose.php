@@ -195,7 +195,7 @@ class Firehose {
 	/**
 	 * Enable companion index files with a custom formatter callback.
 	 *
-	 * @param callable $callback fn(string $line, array $position) => string|null
+	 * @param callable $callback fn(string $line, array $position, ?array &$data) => string|null
 	 * @return self
 	 */
 	public function with_index( callable $callback ): self {
@@ -382,9 +382,9 @@ class Firehose {
 	 * @param string $line The line to write (newline will be appended).
 	 * @return array|false Position array on success, false on failure.
 	 */
-	public function write( string $line ) {
-		$data = $line . "\n";
-		$len  = \strlen( $data );
+	public function write( string $line, ?array &$data = null ) {
+		$raw = $line . "\n";
+		$len = \strlen( $raw );
 
 		if ( $this->drop_large_writes && $len > self::MAX_LINE_SIZE ) {
 			// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
@@ -422,7 +422,7 @@ class Firehose {
 		}
 
 		// Write all bytes, handling partial writes.
-		$remaining = $data;
+		$remaining = $raw;
 		while ( '' !== $remaining ) {
 			// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fwrite, WordPressVIPMinimum.Functions.RestrictedFunctions.file_ops_fwrite
 			$written = @\fwrite( $fh, $remaining );
@@ -437,7 +437,7 @@ class Firehose {
 		// Write to companion index if callback is set (handle opened with log in get_handle).
 		if ( null !== $this->index_callback && null !== $this->idx_fh ) {
 			try {
-				$index_entry = ( $this->index_callback )( $line, $position );
+				$index_entry = ( $this->index_callback )( $line, $position, $data );
 				if ( null !== $index_entry ) {
 					// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fwrite, WordPressVIPMinimum.Functions.RestrictedFunctions.file_ops_fwrite
 					@\fwrite( $this->idx_fh, $index_entry . "\n" );
