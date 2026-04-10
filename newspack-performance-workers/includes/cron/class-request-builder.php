@@ -259,16 +259,11 @@ class RequestBuilder {
 				'k'  => $keyword,
 			];
 
-			// Truncate 'm' to bound per-entry memory.
+			// Truncate string 'm' to bound per-entry memory.
+			// Array messages are already bounded by PIPE_BUF (4KB) at the firehose writer.
 			$m = $entry['m'] ?? '';
 			if ( \is_string( $m ) && \strlen( $m ) > self::MAX_ENTRY_MESSAGE_LENGTH ) {
 				$m = \substr( $m, 0, self::MAX_ENTRY_MESSAGE_LENGTH );
-			} elseif ( \is_array( $m ) ) {
-				// phpcs:ignore WordPress.WP.AlternativeFunctions.json_encode_json_encode -- wp_json_encode overhead unnecessary for throwaway length check.
-				$encoded_check = \json_encode( $m );
-				if ( false !== $encoded_check && \strlen( $encoded_check ) > self::MAX_ENTRY_MESSAGE_LENGTH ) {
-					$m = '';
-				}
 			}
 			$stored['m'] = $m;
 
