@@ -5,6 +5,9 @@
  * Simple bucket-based LRU cache for in-memory data.
  * Evicts oldest bucket when capacity exceeded.
  *
+ * Store objects (not arrays) for zero-copy mutation — objects are
+ * references in PHP, so get() returns the same instance.
+ *
  * @package Newspack_Event_Logger
  */
 

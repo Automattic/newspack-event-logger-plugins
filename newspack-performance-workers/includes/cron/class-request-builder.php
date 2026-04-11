@@ -79,7 +79,22 @@ class RequestBuilder {
 
 		// Restore in-flight requests from saved state.
 		if ( \is_array( $saved_state ) && isset( $saved_state['request_cache'] ) ) {
-			$context['request_cache']->restore_state( $saved_state['request_cache'] );
+			// Saved state has arrays — convert back to objects.
+			$cache_state = $saved_state['request_cache'];
+			if ( isset( $cache_state['buckets'] ) && \is_array( $cache_state['buckets'] ) ) {
+				foreach ( $cache_state['buckets'] as &$bucket ) {
+					if ( \is_array( $bucket ) ) {
+						foreach ( $bucket as $key => &$val ) {
+							if ( \is_array( $val ) ) {
+								$val = (object) $val;
+							}
+						}
+						unset( $val );
+					}
+				}
+				unset( $bucket );
+			}
+			$context['request_cache']->restore_state( $cache_state );
 		}
 
 		// Create requests firehose for output with companion index.
@@ -102,84 +117,84 @@ class RequestBuilder {
 	private static function set_state_callbacks( array &$context ): void {
 		$s = [];
 
-		$s['process (start)'] = function ( array &$request, array $entry ): void {
+		$s['process (start)'] = function ( \stdClass $request, array $entry ): void {
 			$payload = $entry['m'] ?? '';
 			if ( \is_array( $payload ) ) {
 				$payload = $payload['m'] ?? '';
 			}
 			if ( \is_string( $payload ) && strlen( $payload ) < self::MAX_ENTRY_MESSAGE_LENGTH && \preg_match( '/^(\d+) on (\S+)/', $payload, $m ) ) {
-				$request['process_id'] = $m[1];
-				$request['host']       = $m[2];
+				$request->process_id = $m[1];
+				$request->host       = $m[2];
 			}
-			$request['timestamp']   = $entry['ts'] ?? \microtime( true );
-			$request['stack']       = [ [ 'process', '' ] ];
-			$request['profiles']    = [];
-			$request['entries']     = [];
-			$request['state']       = 'process';
-			$request['initialized'] = true;
+			$request->timestamp   = $entry['ts'] ?? \microtime( true );
+			$request->stack       = [ [ 'process', '' ] ];
+			$request->profiles    = [];
+			$request->entries     = [];
+			$request->state       = 'process';
+			$request->initialized = true;
 		};
 
-		$s['process (complete)'] = function ( array &$request, array $entry ): void {
-			$request['duration_ms'] = $entry['duration_ms'] ?? 0;
-			$request['status_code'] = $entry['status_code'] ?? 0;
-			$error_status           = $entry['error_status'] ?? '-';
+		$s['process (complete)'] = function ( \stdClass $request, array $entry ): void {
+			$request->duration_ms = $entry['duration_ms'] ?? 0;
+			$request->status_code = $entry['status_code'] ?? 0;
+			$error_status         = $entry['error_status'] ?? '-';
 			if ( ! \is_string( $error_status ) || 1 !== \strlen( $error_status ) || ! \in_array( $error_status, [ '-', 'F', 'T' ], true ) ) {
 				$error_status = '-';
 			}
-			$request['error_status'] = $error_status;
-			$request['state']        = 'complete';
+			$request->error_status = $error_status;
+			$request->state        = 'complete';
 		};
 
-		$s['request'] = function ( array &$request, array $entry ): void {
+		$s['request'] = function ( \stdClass $request, array $entry ): void {
 			$message = $entry['m'] ?? '';
 			if ( \strlen( $message ) < self::MAX_PAYLOAD_SCAN_LENGTH && \preg_match( '/^(?:GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS|CLI)\s+(.+)$/', $message, $m ) ) {
 				// Strip query string — URL hash already ignores it for merging,
 				// and keeping it wastes memory and makes the URL table noisy.
-				$request['url'] = \explode( '?', $m[1], 2 )[0];
+				$request->url = \explode( '?', $m[1], 2 )[0];
 			}
-			$parts                     = \explode( ' ', $message, 2 );
-			$request['request_method'] = $parts[0] ?? '';
+			$parts                   = \explode( ' ', $message, 2 );
+			$request->request_method = $parts[0] ?? '';
 		};
 
-		$s['environment_v2'] = function ( array &$request, array $entry ): void {
+		$s['environment_v2'] = function ( \stdClass $request, array $entry ): void {
 			$message = $entry['m'] ?? '';
 			if ( \strlen( $message ) > 8192 ) {
 				return;
 			}
 			if ( \preg_match( '/^REMOTE_ADDR => "(.+)"$/', $message, $m ) ) {
 				$ip = \trim( $m[1] );
-				$request['remote_addr'] = \filter_var( $ip, FILTER_VALIDATE_IP ) ? $ip : '';
+				$request->remote_addr = \filter_var( $ip, FILTER_VALIDATE_IP ) ? $ip : '';
 			} elseif ( \preg_match( '/^HTTP_USER_AGENT => "(.+)"$/', $message, $m ) ) {
-				$request['user_agent'] = $m[1];
+				$request->user_agent = $m[1];
 			} elseif ( \preg_match( '/^HTTP_X_FORWARDED_FOR => "(.+)"$/', $message, $m ) ) {
-				if ( empty( $request['remote_addr'] ) ) {
+				if ( empty( $request->remote_addr ) ) {
 					$parts = \explode( ',', $m[1], 2 );
 					$ip    = \trim( $parts[0] );
 					if ( \filter_var( $ip, FILTER_VALIDATE_IP ) ) {
-						$request['remote_addr'] = $ip;
+						$request->remote_addr = $ip;
 					}
 				}
 			} elseif ( \preg_match( '/^SERVER_NAME => "(.+)"$/', $message, $m ) ) {
-				$request['server_name'] = $m[1];
+				$request->server_name = $m[1];
 			} elseif ( \preg_match( '/^GEOIP_COUNTRY_CODE => "(.+)"$/', $message, $m ) ) {
-				$request['country_code'] = $m[1];
+				$request->country_code = $m[1];
 			} elseif ( \preg_match( '/^HTTP_FROM => "(.+)"$/', $message, $m ) ) {
-				$request['http_from'] = $m[1];
+				$request->http_from = $m[1];
 			} elseif ( \preg_match( '/^HTTP_X_JA4_HASH => "(.+)"$/', $message, $m ) ) {
-				$request['ja4_hash'] = $m[1];
+				$request->ja4_hash = $m[1];
 			} elseif ( \preg_match( '/^EVENT_LOGGER_WORKER_TYPE => ".+"$/', $message ) ) {
-				$request['is_worker'] = true;
+				$request->is_worker = true;
 			}
 		};
 
-		$s['worker_type'] = function ( array &$request, array $entry ): void {
-			$request['is_worker'] = true;
+		$s['worker_type'] = function ( \stdClass $request, array $entry ): void {
+			$request->is_worker = true;
 		};
 
-		$s['memory'] = function ( array &$request, array $entry ): void {
+		$s['memory'] = function ( \stdClass $request, array $entry ): void {
 			$m = $entry['m'] ?? [];
 			if ( \is_array( $m ) && isset( $m['peak'] ) ) {
-				$request['peak_mb'] = (float) $m['peak'];
+				$request->peak_mb = (float) $m['peak'];
 			}
 		};
 
@@ -219,13 +234,15 @@ class RequestBuilder {
 		}
 		$n = $entry['n'] ?? 0;
 
-		$request = $context['request_cache']->get( $rid ) ?? [];
-		$request['rid'] = $rid;
-
-		if ( empty( $request['initialized'] ) ) {
+		// get() returns the same object instance — mutations happen in place.
+		$request = $context['request_cache']->get( $rid );
+		if ( null === $request ) {
 			if ( 'process (start)' !== $keyword ) {
 				return;
 			}
+			$request = new \stdClass();
+			$request->rid = $rid;
+			$context['request_cache']->set( $rid, $request );
 		}
 
 		// Forward errors and warnings to errors.log.
@@ -246,12 +263,12 @@ class RequestBuilder {
 		}
 
 		// Evict runaway requests immediately.
-		if ( $request['is_runaway'] ?? false ) {
+		if ( $request->is_runaway ?? false ) {
 			$context['request_cache']->delete( $rid );
 			return;
 		}
 
-		if ( isset( $request['entries'] ) && \count( $request['entries'] ) < self::MAX_ENTRIES_PER_REQUEST ) {
+		if ( isset( $request->entries ) && \count( $request->entries ) < self::MAX_ENTRIES_PER_REQUEST ) {
 			$stored = [
 				'n'  => $n,
 				'ts' => $entry['ts'] ?? 0,
@@ -276,19 +293,18 @@ class RequestBuilder {
 				$stored['peak_mb'] = $entry['peak_mb'];
 			}
 
-			$request['entries'][] = $stored;
-		} elseif ( isset( $request['entries'] ) && empty( $request['truncated'] ) ) {
-			$request['truncated'] = true;
+			$request->entries[] = $stored;
+		} elseif ( isset( $request->entries ) && empty( $request->truncated ) ) {
+			$request->truncated = true;
 		}
 
-		if ( 'complete' === ( $request['state'] ?? '' ) ) {
+		if ( 'complete' === ( $request->state ?? '' ) ) {
 			// Write immediately to get state out of RAM.
-			if ( ! empty( $request['url'] ) ) {
-				$context['requests_log']->write( \wp_json_encode( $request ), $request );
+			if ( ! empty( $request->url ) ) {
+				$data = (array) $request;
+				$context['requests_log']->write( \wp_json_encode( $request ), $data );
 			}
 			$context['request_cache']->delete( $rid );
-		} else {
-			$context['request_cache']->set( $rid, $request );
 		}
 	}
 
@@ -297,18 +313,18 @@ class RequestBuilder {
 	 *
 	 * Stack frames are [ state, label ] pairs.
 	 *
-	 * @param array  $request Request data.
-	 * @param string $state   State name (e.g. "wp_head hook").
-	 * @param string $label   Stable label for aggregation (the 'l' field).
+	 * @param \stdClass $request Request object.
+	 * @param string    $state   State name (e.g. "wp_head hook").
+	 * @param string    $label   Stable label for aggregation (the 'l' field).
 	 */
-	private static function push_stack( array &$request, string $state, string $label ): void {
-		if ( ! isset( $request['stack'] ) ) {
-			$request['stack']    = [ [ 'process', '' ] ];
-			$request['profiles'] = [];
+	private static function push_stack( \stdClass $request, string $state, string $label ): void {
+		if ( ! isset( $request->stack ) ) {
+			$request->stack    = [ [ 'process', '' ] ];
+			$request->profiles = [];
 		}
 
-		if ( ! isset( $request['profiles'][ $state ] ) ) {
-			$request['profiles'][ $state ] = [
+		if ( ! isset( $request->profiles[ $state ] ) ) {
+			$request->profiles[ $state ] = [
 				'entries' => [],
 				'count'   => 0,
 				'time'    => 0,
@@ -316,47 +332,47 @@ class RequestBuilder {
 			];
 		}
 
-		$request['stack'][] = [ $state, $label ];
+		$request->stack[] = [ $state, $label ];
 
-		$profile = &$request['profiles'][ $state ];
+		$profile = &$request->profiles[ $state ];
 		if ( $label && \count( $profile['entries'] ) < 1000 && ! isset( $profile['entries'][ $label ] ) ) {
 			$profile['entries'][ $label ] = [ 0, 0 ];
 		}
 
-		if ( \count( $request['stack'] ) > self::MAX_STACK_DEPTH ) {
-			$request['is_runaway'] = true;
+		if ( \count( $request->stack ) > self::MAX_STACK_DEPTH ) {
+			$request->is_runaway = true;
 		}
 	}
 
 	/**
 	 * Pop state from request stack.
 	 *
-	 * @param array  $request Request data.
-	 * @param string $state   State name to match.
-	 * @param float  $time    Duration in ms.
-	 * @param float  $ts      Timestamp.
+	 * @param \stdClass $request Request object.
+	 * @param string    $state   State name to match.
+	 * @param float     $time    Duration in ms.
+	 * @param float     $ts      Timestamp.
 	 */
-	private static function pop_stack( array &$request, string $state, float $time, float $ts = 0 ): void {
-		if ( $request['is_runaway'] ?? false ) {
+	private static function pop_stack( \stdClass $request, string $state, float $time, float $ts = 0 ): void {
+		if ( $request->is_runaway ?? false ) {
 			return;
 		}
 
-		if ( empty( $request['stack'] ) ) {
+		if ( empty( $request->stack ) ) {
 			return;
 		}
 
-		$last_idx = \count( $request['stack'] ) - 1;
-		$frame    = $request['stack'][ $last_idx ];
+		$last_idx = \count( $request->stack ) - 1;
+		$frame    = $request->stack[ $last_idx ];
 
 		if ( $frame[0] === $state ) {
 			// Fast path: matched top of stack (the common case).
 			$label = $frame[1];
-			\array_pop( $request['stack'] );
+			\array_pop( $request->stack );
 		} else {
 			// Slow path: mismatched close — search backward and unwind.
 			$found_idx = false;
 			for ( $i = $last_idx - 1; $i >= 0; $i-- ) {
-				if ( $request['stack'][ $i ][0] === $state ) {
+				if ( $request->stack[ $i ][0] === $state ) {
 					$found_idx = $i;
 					break;
 				}
@@ -365,12 +381,12 @@ class RequestBuilder {
 				return;
 			}
 
-			$label = $request['stack'][ $found_idx ][1];
-			\array_splice( $request['stack'], $found_idx );
+			$label = $request->stack[ $found_idx ][1];
+			\array_splice( $request->stack, $found_idx );
 		}
 
-		if ( isset( $request['profiles'][ $state ] ) ) {
-			$profile          = &$request['profiles'][ $state ];
+		if ( isset( $request->profiles[ $state ] ) ) {
+			$profile          = &$request->profiles[ $state ];
 			$profile['time'] += $time;
 			++$profile['count'];
 			$profile['ts'] = \max( $profile['ts'], $ts );
@@ -386,19 +402,19 @@ class RequestBuilder {
 		// so callback completion does NOT subtract from the hook.
 		// Non-callback children subtract from BOTH the callback (if inside one)
 		// AND the callback's parent hook.
-		if ( ! empty( $request['stack'] ) && ! self::is_callback_state( $state ) ) {
-			for ( $j = \count( $request['stack'] ) - 1; $j >= 0; $j-- ) {
-				$ancestor_frame = $request['stack'][ $j ];
+		if ( ! empty( $request->stack ) && ! self::is_callback_state( $state ) ) {
+			for ( $j = \count( $request->stack ) - 1; $j >= 0; $j-- ) {
+				$ancestor_frame = $request->stack[ $j ];
 				$ancestor       = $ancestor_frame[0];
 				if ( 'process' === $ancestor ) {
 					break;
 				}
-				if ( isset( $request['profiles'][ $ancestor ] ) ) {
-					$request['profiles'][ $ancestor ]['time'] -= $time;
+				if ( isset( $request->profiles[ $ancestor ] ) ) {
+					$request->profiles[ $ancestor ]['time'] -= $time;
 
 					$ancestor_label = $ancestor_frame[1];
-					if ( $ancestor_label && isset( $request['profiles'][ $ancestor ]['entries'][ $ancestor_label ] ) ) {
-						$request['profiles'][ $ancestor ]['entries'][ $ancestor_label ][0] -= $time;
+					if ( $ancestor_label && isset( $request->profiles[ $ancestor ]['entries'][ $ancestor_label ] ) ) {
+						$request->profiles[ $ancestor ]['entries'][ $ancestor_label ][0] -= $time;
 					}
 					// If we just subtracted from a callback, continue to also
 					// subtract from its parent hook. Stop after the first
@@ -428,24 +444,25 @@ class RequestBuilder {
 	 * Incomplete requests get written with error_status=T.
 	 * Called by the LruCache eviction callback.
 	 *
-	 * @param array  $context Handler context.
-	 * @param string $rid     Request ID.
-	 * @param mixed  $request Request data.
+	 * @param array     $context Handler context.
+	 * @param string    $rid     Request ID.
+	 * @param \stdClass $request Request object.
 	 */
 	private static function evict_request( array &$context, string $rid, $request ): void {
-		if ( ! \is_array( $request ) || empty( $request['url'] ) ) {
+		if ( ! ( $request instanceof \stdClass ) || empty( $request->url ) ) {
 			return;
 		}
-		if ( 'complete' === ( $request['state'] ?? '' ) ) {
+		if ( 'complete' === ( $request->state ?? '' ) ) {
 			return;
 		}
-		$now                     = \time();
-		$start_ts                = (int) ( $request['timestamp'] ?? $now );
-		$request['error_status'] = 'T';
-		$request['duration_ms']  = ( $now - $start_ts ) * 1000;
-		$request['status_code']  = $request['status_code'] ?? 0;
-		$request['state']        = 'complete';
-		$context['requests_log']->write( \wp_json_encode( $request ), $request );
+		$now                    = \time();
+		$start_ts               = (int) ( $request->timestamp ?? $now );
+		$request->error_status  = 'T';
+		$request->duration_ms   = ( $now - $start_ts ) * 1000;
+		$request->status_code   = $request->status_code ?? 0;
+		$request->state         = 'complete';
+		$data = (array) $request;
+		$context['requests_log']->write( \wp_json_encode( $request ), $data );
 	}
 
 	/**
@@ -470,35 +487,59 @@ class RequestBuilder {
 		if ( ! isset( $context['request_cache'] ) ) {
 			return [];
 		}
+		// Convert objects to arrays for serialization.
+		$state = $context['request_cache']->get_state();
+		if ( isset( $state['buckets'] ) ) {
+			foreach ( $state['buckets'] as &$bucket ) {
+				if ( \is_array( $bucket ) ) {
+					foreach ( $bucket as $key => &$val ) {
+						if ( $val instanceof \stdClass ) {
+							$val = (array) $val;
+						}
+					}
+					unset( $val );
+				}
+			}
+			unset( $bucket );
+		}
 		return [
-			'request_cache' => $context['request_cache']->get_state(),
+			'request_cache' => $state,
 		];
 	}
 
 	/**
 	 * Format index entry callback for Firehose::with_index().
 	 *
-	 * @param string     $line     The JSON line written.
-	 * @param array      $position Position array.
-	 * @param array|null $data     Pre-decoded data (avoids re-parsing $line).
+	 * @param string            $line     The JSON line written.
+	 * @param array             $position Position array.
+	 * @param \stdClass|array|null $data  Pre-decoded data (avoids re-parsing $line).
 	 * @return string|null Index entry or null.
 	 */
-	public static function format_index_entry( string $line, array $position, ?array &$data = null ): ?string {
-		$request = $data ?? \json_decode( $line, true, 64 );
-		if ( ! \is_array( $request ) || empty( $request['url'] ) ) {
+	public static function format_index_entry( string $line, array $position, &$data = null ): ?string {
+		if ( $data instanceof \stdClass ) {
+			$request = $data;
+		} else {
+			$decoded = $data ?? \json_decode( $line, true, 64 );
+			if ( ! \is_array( $decoded ) || empty( $decoded['url'] ) ) {
+				return null;
+			}
+			$request = (object) $decoded;
+		}
+
+		if ( empty( $request->url ) ) {
 			return null;
 		}
 
-		$rid          = $request['rid'] ?? '';
-		$url_hash     = self::url_hash( $request['url'] );
-		$timestamp    = (int) ( $request['timestamp'] ?? \time() );
-		$duration_ms  = (int) ( $request['duration_ms'] ?? 0 );
-		$status_code  = (int) ( $request['status_code'] ?? 0 );
-		$peak_mb      = (float) ( $request['peak_mb'] ?? 0 );
+		$rid          = $request->rid ?? '';
+		$url_hash     = self::url_hash( $request->url );
+		$timestamp    = (int) ( $request->timestamp ?? \time() );
+		$duration_ms  = (int) ( $request->duration_ms ?? 0 );
+		$status_code  = (int) ( $request->status_code ?? 0 );
+		$peak_mb      = (float) ( $request->peak_mb ?? 0 );
 		$segment_id   = $position['segment_id'];
 		$offset       = $position['offset'];
 		$length       = $position['length'];
-		$error_status = $request['error_status'] ?? '-';
+		$error_status = $request->error_status ?? '-';
 
 		if ( $offset > 9999999999 || $length > 99999999 || $segment_id > 999999 ) {
 			return '';
@@ -518,7 +559,7 @@ class RequestBuilder {
 			'OPTIONS' => 'O',
 			'CLI'     => 'C',
 		];
-		$method = $method_codes[ $request['request_method'] ?? 'GET' ] ?? 'G';
+		$method = $method_codes[ $request->request_method ?? 'GET' ] ?? 'G';
 
 		return \str_pad( \substr( $rid, 0, 32 ), 32 )
 			. \str_pad( \substr( $url_hash, 0, 12 ), 12 )

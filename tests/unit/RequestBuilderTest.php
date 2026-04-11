@@ -107,7 +107,7 @@ class RequestBuilderTest extends TestCase {
 	}
 
 	public function test_init_restores_saved_state(): void {
-		// Create a cache with some data.
+		// Create a cache with some data (arrays, as they'd be serialized).
 		$cache = new LruCache( 10, 2 );
 		$cache->set( 'rid1', [ 'rid' => 'rid1', 'url' => '/test', 'initialized' => true ] );
 		$state = $cache->get_state();
@@ -120,7 +120,9 @@ class RequestBuilderTest extends TestCase {
 
 		$restored = $context['request_cache']->get( 'rid1' );
 		$this->assertNotNull( $restored );
-		$this->assertSame( 'rid1', $restored['rid'] );
+		// Restored from serialized arrays — init converts to stdClass.
+		$this->assertInstanceOf( \stdClass::class, $restored );
+		$this->assertSame( 'rid1', $restored->rid );
 	}
 
 	public function test_process_start_initializes_request(): void {
@@ -129,10 +131,10 @@ class RequestBuilderTest extends TestCase {
 		RequestBuilder::process( $this->entry( 'r1', 'process (start)' ), 'firehose.log', $context );
 
 		$request = $context['request_cache']->get( 'r1' );
-		$this->assertNotNull( $request );
-		$this->assertTrue( $request['initialized'] );
-		$this->assertSame( 'process', $request['state'] );
-		$this->assertSame( [ 'process' ], $request['stack'] );
+		$this->assertInstanceOf( \stdClass::class, $request );
+		$this->assertTrue( $request->initialized );
+		$this->assertSame( 'process', $request->state );
+		$this->assertSame( [ [ 'process', '' ] ], $request->stack );
 	}
 
 	public function test_process_skips_entry_without_start(): void {
@@ -176,8 +178,8 @@ class RequestBuilderTest extends TestCase {
 
 		$request = $context['request_cache']->get( $rid );
 		// URL should be stripped of query string.
-		$this->assertSame( 'https://example.com/page', $request['url'] );
-		$this->assertSame( 'GET', $request['request_method'] );
+		$this->assertSame( 'https://example.com/page', $request->url );
+		$this->assertSame( 'GET', $request->request_method );
 	}
 
 	public function test_process_extracts_environment(): void {
@@ -190,9 +192,9 @@ class RequestBuilderTest extends TestCase {
 		RequestBuilder::process( $this->entry( $rid, 'environment_v2', 'SERVER_NAME => "example.com"' ), 'firehose.log', $context );
 
 		$request = $context['request_cache']->get( $rid );
-		$this->assertSame( '10.0.0.1', $request['remote_addr'] );
-		$this->assertSame( 'TestBot/1.0', $request['user_agent'] );
-		$this->assertSame( 'example.com', $request['server_name'] );
+		$this->assertSame( '10.0.0.1', $request->remote_addr );
+		$this->assertSame( 'TestBot/1.0', $request->user_agent );
+		$this->assertSame( 'example.com', $request->server_name );
 	}
 
 	public function test_process_extracts_process_id_and_host(): void {
@@ -202,8 +204,8 @@ class RequestBuilderTest extends TestCase {
 		RequestBuilder::process( $this->entry( $rid, 'process (start)', '12345 on web-host-01' ), 'firehose.log', $context );
 
 		$request = $context['request_cache']->get( $rid );
-		$this->assertSame( '12345', $request['process_id'] );
-		$this->assertSame( 'web-host-01', $request['host'] );
+		$this->assertSame( '12345', $request->process_id );
+		$this->assertSame( 'web-host-01', $request->host );
 	}
 
 	public function test_process_worker_type_flag(): void {
@@ -214,7 +216,7 @@ class RequestBuilderTest extends TestCase {
 		RequestBuilder::process( $this->entry( $rid, 'worker_type', 'supervisor' ), 'firehose.log', $context );
 
 		$request = $context['request_cache']->get( $rid );
-		$this->assertTrue( $request['is_worker'] );
+		$this->assertTrue( $request->is_worker );
 	}
 
 	public function test_push_stack_and_pop_stack(): void {
@@ -225,7 +227,7 @@ class RequestBuilderTest extends TestCase {
 		RequestBuilder::process( $this->entry( $rid, 'hook (start)', 'init' ), 'firehose.log', $context );
 
 		$request = $context['request_cache']->get( $rid );
-		$this->assertSame( [ 'process', 'hook' ], $request['stack'] );
+		$this->assertSame( [ [ 'process', '' ], [ 'hook', '' ] ], $request->stack );
 
 		RequestBuilder::process(
 			\wp_json_encode( [
@@ -240,9 +242,9 @@ class RequestBuilderTest extends TestCase {
 		);
 
 		$request = $context['request_cache']->get( $rid );
-		$this->assertSame( [ 'process' ], $request['stack'] );
-		$this->assertArrayHasKey( 'hook', $request['profiles'] );
-		$this->assertSame( 1, $request['profiles']['hook']['count'] );
+		$this->assertSame( [ [ 'process', '' ] ], $request->stack );
+		$this->assertArrayHasKey( 'hook', $request->profiles );
+		$this->assertSame( 1, $request->profiles['hook']['count'] );
 	}
 
 	public function test_runaway_request_evicted(): void {
@@ -270,34 +272,34 @@ class RequestBuilderTest extends TestCase {
 				0.001, // Rotate almost immediately.
 				function ( string $rid, $request ) use ( &$context ): void {
 					// Mirror the real eviction logic inline.
-					if ( ! \is_array( $request ) || empty( $request['url'] ) || 'complete' === ( $request['state'] ?? '' ) ) {
+					if ( ! ( $request instanceof \stdClass ) || empty( $request->url ) || 'complete' === ( $request->state ?? '' ) ) {
 						return;
 					}
-					$now                     = \time();
-					$request['error_status'] = 'T';
-					$request['duration_ms']  = ( $now - (int) ( $request['timestamp'] ?? $now ) ) * 1000;
-					$request['status_code']  = $request['status_code'] ?? 0;
-					$request['state']        = 'complete';
+					$now                    = \time();
+					$request->error_status  = 'T';
+					$request->duration_ms   = ( $now - (int) ( $request->timestamp ?? $now ) ) * 1000;
+					$request->status_code   = $request->status_code ?? 0;
+					$request->state         = 'complete';
 					$context['requests_log']->write( \wp_json_encode( $request ) );
 				}
 			);
 
-		// Insert a request with a URL (evictable).
-		$context['request_cache']->set( 'r10', [
-			'rid'         => 'r10',
-			'url'         => '/old-page',
-			'timestamp'   => \time() - 600,
-			'initialized' => true,
-			'state'       => 'process',
-			'entries'     => [],
-		] );
+		// Insert a request object with a URL (evictable).
+		$r10 = new \stdClass();
+		$r10->rid         = 'r10';
+		$r10->url         = '/old-page';
+		$r10->timestamp   = \time() - 600;
+		$r10->initialized = true;
+		$r10->state       = 'process';
+		$r10->entries     = [];
+		$context['request_cache']->set( 'r10', $r10 );
 
 		// Fill bucket to trigger capacity rotation, then wait for time rotation.
-		$context['request_cache']->set( 'filler1', [ 'rid' => 'filler1' ] );
-		$context['request_cache']->set( 'filler2', [ 'rid' => 'filler2' ] );
+		$context['request_cache']->set( 'filler1', (object) [ 'rid' => 'filler1' ] );
+		$context['request_cache']->set( 'filler2', (object) [ 'rid' => 'filler2' ] );
 		\usleep( 2000 ); // 2ms > 0.001s rotation interval.
-		$context['request_cache']->set( 'filler3', [ 'rid' => 'filler3' ] );
-		$context['request_cache']->set( 'filler4', [ 'rid' => 'filler4' ] );
+		$context['request_cache']->set( 'filler3', (object) [ 'rid' => 'filler3' ] );
+		$context['request_cache']->set( 'filler4', (object) [ 'rid' => 'filler4' ] );
 		\usleep( 2000 );
 		$context['request_cache']->rotate_if_due();
 
@@ -325,13 +327,13 @@ class RequestBuilderTest extends TestCase {
 				}
 			);
 
-		$context['request_cache']->set( 'r11', [
-			'rid'         => 'r11',
-			'url'         => '/active-page',
-			'timestamp'   => \time(),
-			'initialized' => true,
-			'state'       => 'process',
-		] );
+		$r11 = new \stdClass();
+		$r11->rid         = 'r11';
+		$r11->url         = '/active-page';
+		$r11->timestamp   = \time();
+		$r11->initialized = true;
+		$r11->state       = 'process';
+		$context['request_cache']->set( 'r11', $r11 );
 
 		// Rotate twice — r11 should be promoted on get() and survive.
 		\usleep( 2000 );
@@ -485,7 +487,7 @@ class RequestBuilderTest extends TestCase {
 		);
 
 		$request = $context['request_cache']->get( $rid );
-		$this->assertTrue( $request['is_worker'], 'environment_v2 with EVENT_LOGGER_WORKER_TYPE should set is_worker' );
+		$this->assertTrue( $request->is_worker, 'environment_v2 with EVENT_LOGGER_WORKER_TYPE should set is_worker' );
 	}
 
 	public function test_process_memory_peak(): void {
@@ -506,7 +508,7 @@ class RequestBuilderTest extends TestCase {
 		);
 
 		$request = $context['request_cache']->get( $rid );
-		$this->assertSame( 128.5, $request['peak_mb'] );
+		$this->assertSame( 128.5, $request->peak_mb );
 	}
 
 	public function test_process_invalid_json_skipped(): void {
@@ -550,8 +552,8 @@ class RequestBuilderTest extends TestCase {
 		RequestBuilder::process( $this->entry( $rid, 'hook (start)', 'init' ), 'firehose.log', $context );
 
 		$request = $context['request_cache']->get( $rid );
-		$this->assertIsArray( $request['entries'] );
-		$this->assertGreaterThanOrEqual( 3, \count( $request['entries'] ) );
+		$this->assertIsArray( $request->entries );
+		$this->assertGreaterThanOrEqual( 3, \count( $request->entries ) );
 	}
 
 	public function test_entry_message_truncation(): void {
@@ -564,7 +566,7 @@ class RequestBuilderTest extends TestCase {
 		RequestBuilder::process( $this->entry( $rid, 'info', $long_msg ), 'firehose.log', $context );
 
 		$request = $context['request_cache']->get( $rid );
-		$last    = \end( $request['entries'] );
+		$last    = \end( $request->entries );
 		$this->assertLessThanOrEqual( 1024, \strlen( $last['m'] ) );
 	}
 }

@@ -9,9 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- RequestBuilder: use `array_pop` fast path for stack operations instead of `array_slice` on every pop — eliminates two array allocations per firehose event in the common case
-- RequestBuilder: collapse `stack` + `what_stack` into single stack of `[state, label]` tuples — halves stack memory and splice operations
+- RequestBuilder: store in-flight requests as `\stdClass` objects in LruCache — eliminates array copy-on-write overhead that caused 5x throughput degradation under load (1,425ms → 244ms for 50k lines)
+- RequestBuilder: use `array_pop` fast path for stack operations instead of `array_slice` on every pop
+- RequestBuilder: collapse `stack` + `what_stack` into single stack of `[state, label]` tuples
 - RequestBuilder: use `l` (stable label) instead of `m` (volatile message) for profile entry aggregation, matching FlameBuilder convention
+- LruCache: remove `ref()` and `has()` — callers store objects for zero-copy semantics instead
 - InflightTracker: same stack collapse — single `[state, message]` tuples, one splice instead of two
 
 ## [2.4.16] - 2026-04-10
