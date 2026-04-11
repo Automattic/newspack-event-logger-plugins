@@ -74,8 +74,7 @@ class InflightTracker {
 				'tracker_ts'  => \microtime( true ),
 				'state'       => 'process',
 				'what'        => '',
-				'stack'       => [ 'process' ],
-				'what_stack'  => [ '' ],
+				'stack'       => [ [ 'process', '' ] ],
 				'remote_addr' => '',
 				'user_agent'  => '',
 			];
@@ -126,8 +125,7 @@ class InflightTracker {
 		if ( 'start' === $action ) {
 			// Security: Limit stack depth to prevent unbounded memory growth (Pattern 40).
 			if ( \count( $request['stack'] ) < self::MAX_STACK_DEPTH ) {
-				$request['stack'][]      = $label;
-				$request['what_stack'][] = $message;
+				$request['stack'][] = [ $label, $message ];
 			}
 			$request['state']        = $label;
 			$request['what']         = $message;
@@ -135,14 +133,14 @@ class InflightTracker {
 
 		if ( 'complete' === $action ) {
 			for ( $i = \count( $request['stack'] ) - 1; $i >= 0; $i-- ) {
-				if ( $request['stack'][ $i ] === $label ) {
+				if ( $request['stack'][ $i ][0] === $label ) {
 					\array_splice( $request['stack'], $i );
-					\array_splice( $request['what_stack'], $i );
 					break;
 				}
 			}
-			$request['state'] = \end( $request['stack'] ) ?: 'process';
-			$request['what']  = \end( $request['what_stack'] ) ?: '';
+			$top              = \end( $request['stack'] ) ?: [ 'process', '' ];
+			$request['state'] = $top[0];
+			$request['what']  = $top[1];
 		}
 	}
 

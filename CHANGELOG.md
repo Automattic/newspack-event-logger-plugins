@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.17] - 2026-04-11
+
+### Changed
+
+- RequestBuilder: use `array_pop` fast path for stack operations instead of `array_slice` on every pop — eliminates two array allocations per firehose event in the common case
+- RequestBuilder: collapse `stack` + `what_stack` into single stack of `[state, label]` tuples — halves stack memory and splice operations
+- RequestBuilder: use `l` (stable label) instead of `m` (volatile message) for profile entry aggregation, matching FlameBuilder convention
+- InflightTracker: same stack collapse — single `[state, message]` tuples, one splice instead of two
+
 ## [2.4.16] - 2026-04-10
 
 ### Changed

@@ -112,8 +112,7 @@ class RequestBuilder {
 				$request['host']       = $m[2];
 			}
 			$request['timestamp']   = $entry['ts'] ?? \microtime( true );
-			$request['stack']       = [ 'process' ];
-			$request['what_stack']  = [ '' ];
+			$request['stack']       = [ [ 'process', '' ] ];
 			$request['profiles']    = [];
 			$request['entries']     = [];
 			$request['state']       = 'process';
@@ -240,8 +239,8 @@ class RequestBuilder {
 		if ( isset( $context['state_callbacks'][ $keyword ] ) ) {
 			$context['state_callbacks'][ $keyword ]( $request, $entry );
 		} elseif ( \str_ends_with( $keyword, ' (start)' ) ) {
-			$what = $entry['m'] ?? '';
-			self::push_stack( $request, \substr( $keyword, 0, -8 ), \is_string( $what ) ? $what : '' );
+			$label = $entry['l'] ?? '';
+			self::push_stack( $request, \substr( $keyword, 0, -8 ), \is_string( $label ) ? $label : '' );
 		} elseif ( \str_ends_with( $keyword, ' (complete)' ) ) {
 			self::pop_stack( $request, \substr( $keyword, 0, -11 ), $entry['duration_ms'] ?? 0, $entry['ts'] ?? 0 );
 		}
@@ -296,15 +295,16 @@ class RequestBuilder {
 	/**
 	 * Push state onto request stack.
 	 *
+	 * Stack frames are [ state, label ] pairs.
+	 *
 	 * @param array  $request Request data.
-	 * @param string $state   State name.
-	 * @param string $what    What identifier.
+	 * @param string $state   State name (e.g. "wp_head hook").
+	 * @param string $label   Stable label for aggregation (the 'l' field).
 	 */
-	private static function push_stack( array &$request, string $state, string $what ): void {
+	private static function push_stack( array &$request, string $state, string $label ): void {
 		if ( ! isset( $request['stack'] ) ) {
-			$request['stack']      = [ 'process' ];
-			$request['what_stack'] = [ '' ];
-			$request['profiles']   = [];
+			$request['stack']    = [ [ 'process', '' ] ];
+			$request['profiles'] = [];
 		}
 
 		if ( ! isset( $request['profiles'][ $state ] ) ) {
@@ -316,12 +316,11 @@ class RequestBuilder {
 			];
 		}
 
-		$request['stack'][]      = $state;
-		$request['what_stack'][] = $what;
+		$request['stack'][] = [ $state, $label ];
 
 		$profile = &$request['profiles'][ $state ];
-		if ( \count( $profile['entries'] ) < 1000 && ! isset( $profile['entries'][ $what ] ) ) {
-			$profile['entries'][ $what ] = [ 0, 0 ];
+		if ( $label && \count( $profile['entries'] ) < 1000 && ! isset( $profile['entries'][ $label ] ) ) {
+			$profile['entries'][ $label ] = [ 0, 0 ];
 		}
 
 		if ( \count( $request['stack'] ) > self::MAX_STACK_DEPTH ) {
@@ -333,11 +332,11 @@ class RequestBuilder {
 	 * Pop state from request stack.
 	 *
 	 * @param array  $request Request data.
-	 * @param string $label   State label.
+	 * @param string $state   State name to match.
 	 * @param float  $time    Duration in ms.
 	 * @param float  $ts      Timestamp.
 	 */
-	private static function pop_stack( array &$request, string $label, float $time, float $ts = 0 ): void {
+	private static function pop_stack( array &$request, string $state, float $time, float $ts = 0 ): void {
 		if ( $request['is_runaway'] ?? false ) {
 			return;
 		}
@@ -346,21 +345,29 @@ class RequestBuilder {
 			return;
 		}
 
-		$found_idx = false;
-		for ( $i = \count( $request['stack'] ) - 1; $i >= 0; $i-- ) {
-			if ( $request['stack'][ $i ] === $label ) {
-				$found_idx = $i;
-				break;
-			}
-		}
-		if ( false === $found_idx ) {
-			return;
-		}
+		$last_idx = \count( $request['stack'] ) - 1;
+		$frame    = $request['stack'][ $last_idx ];
 
-		$state                 = $request['stack'][ $found_idx ];
-		$what                  = $request['what_stack'][ $found_idx ] ?? '';
-		$request['stack']      = \array_slice( $request['stack'], 0, $found_idx );
-		$request['what_stack'] = \array_slice( $request['what_stack'], 0, $found_idx );
+		if ( $frame[0] === $state ) {
+			// Fast path: matched top of stack (the common case).
+			$label = $frame[1];
+			\array_pop( $request['stack'] );
+		} else {
+			// Slow path: mismatched close — search backward and unwind.
+			$found_idx = false;
+			for ( $i = $last_idx - 1; $i >= 0; $i-- ) {
+				if ( $request['stack'][ $i ][0] === $state ) {
+					$found_idx = $i;
+					break;
+				}
+			}
+			if ( false === $found_idx ) {
+				return;
+			}
+
+			$label = $request['stack'][ $found_idx ][1];
+			\array_splice( $request['stack'], $found_idx );
+		}
 
 		if ( isset( $request['profiles'][ $state ] ) ) {
 			$profile          = &$request['profiles'][ $state ];
@@ -368,9 +375,9 @@ class RequestBuilder {
 			++$profile['count'];
 			$profile['ts'] = \max( $profile['ts'], $ts );
 
-			if ( $what && isset( $profile['entries'][ $what ] ) ) {
-				$profile['entries'][ $what ][0] += $time;
-				++$profile['entries'][ $what ][1];
+			if ( $label && isset( $profile['entries'][ $label ] ) ) {
+				$profile['entries'][ $label ][0] += $time;
+				++$profile['entries'][ $label ][1];
 			}
 		}
 
@@ -381,16 +388,17 @@ class RequestBuilder {
 		// AND the callback's parent hook.
 		if ( ! empty( $request['stack'] ) && ! self::is_callback_state( $state ) ) {
 			for ( $j = \count( $request['stack'] ) - 1; $j >= 0; $j-- ) {
-				$ancestor = $request['stack'][ $j ];
+				$ancestor_frame = $request['stack'][ $j ];
+				$ancestor       = $ancestor_frame[0];
 				if ( 'process' === $ancestor ) {
 					break;
 				}
 				if ( isset( $request['profiles'][ $ancestor ] ) ) {
 					$request['profiles'][ $ancestor ]['time'] -= $time;
 
-					$ancestor_what = $request['what_stack'][ $j ] ?? '';
-					if ( $ancestor_what && isset( $request['profiles'][ $ancestor ]['entries'][ $ancestor_what ] ) ) {
-						$request['profiles'][ $ancestor ]['entries'][ $ancestor_what ][0] -= $time;
+					$ancestor_label = $ancestor_frame[1];
+					if ( $ancestor_label && isset( $request['profiles'][ $ancestor ]['entries'][ $ancestor_label ] ) ) {
+						$request['profiles'][ $ancestor ]['entries'][ $ancestor_label ][0] -= $time;
 					}
 					// If we just subtracted from a callback, continue to also
 					// subtract from its parent hook. Stop after the first
