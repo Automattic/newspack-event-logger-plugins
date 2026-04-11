@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Performance Dashboard: clamp tooltip left edge to viewport — prevents off-screen overflow on charts near the left boundary
 - SupervisorTest: remove 8 tests referencing deleted `worker_has_work()` method
 - JobRouterTest: rewrite 12 tests for direct `jobs_log` output (queue buffer was removed)
 - LogManagerTest: fix 7 tests to call `start()` before `message()` to trigger firehose initialization

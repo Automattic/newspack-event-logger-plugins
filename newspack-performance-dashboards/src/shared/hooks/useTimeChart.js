@@ -204,6 +204,9 @@ export const setupTooltip = (
 				MARGIN.left + xPos - tooltip.offsetWidth
 			}px`;
 		}
+		if ( tooltip.getBoundingClientRect().left < 0 ) {
+			tooltip.style.left = '0px';
+		}
 	};
 
 	let rafId = null;
