@@ -376,10 +376,10 @@ class WorkerBaseTest extends TestCase {
 		$db_ref->setAccessible( true );
 		$db_ref->setValue( $worker, 0.0 );
 
-		// Force heartbeat to be recent (so it doesn't trigger touch).
+		// Force heartbeat to be old enough that I/O checks run.
 		$hb_ref = new \ReflectionProperty( WorkerBase::class, 'last_heartbeat_touch' );
 		$hb_ref->setAccessible( true );
-		$hb_ref->setValue( $worker, \microtime( true ) );
+		$hb_ref->setValue( $worker, 0.0 );
 
 		$result = $worker->public_should_restart();
 		$this->assertTrue( $result, 'Should restart after max DB check failures' );
@@ -489,10 +489,10 @@ class WorkerBaseTest extends TestCase {
 		$db_ref->setAccessible( true );
 		$db_ref->setValue( $worker, 0.0 );
 
-		// Force heartbeat to be recent.
+		// Force heartbeat to be old enough that I/O checks run.
 		$hb_ref = new \ReflectionProperty( WorkerBase::class, 'last_heartbeat_touch' );
 		$hb_ref->setAccessible( true );
-		$hb_ref->setValue( $worker, \microtime( true ) );
+		$hb_ref->setValue( $worker, 0.0 );
 
 		$result = $worker->public_should_restart();
 		$this->assertFalse( $result );
@@ -625,10 +625,10 @@ class WorkerBaseTest extends TestCase {
 		$db_ref->setAccessible( true );
 		$db_ref->setValue( $worker, 0.0 );
 
-		// Force heartbeat to be recent.
+		// Force heartbeat to be old enough that I/O checks run.
 		$hb_ref = new \ReflectionProperty( WorkerBase::class, 'last_heartbeat_touch' );
 		$hb_ref->setAccessible( true );
-		$hb_ref->setValue( $worker, \microtime( true ) );
+		$hb_ref->setValue( $worker, 0.0 );
 
 		$result = $worker->public_should_restart();
 		$this->assertFalse( $result );

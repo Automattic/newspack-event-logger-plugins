@@ -26,6 +26,8 @@ if ( ! \defined( 'ABSPATH' ) ) {
 abstract class WorkerBase {
 
 	const MAX_RUNTIME_SECONDS      = 595;
+	const LOCK_CHECK_INTERVAL_S    = 0.25;
+	const LOCK_CHECK_GRACE_S       = 0.25;
 	const HEARTBEAT_INTERVAL_S     = 10;
 	const DB_CHECK_INTERVAL_S      = 30;
 	const DB_CHECK_MAX_FAILURES    = 3;
@@ -50,6 +52,11 @@ abstract class WorkerBase {
 				'reason'    => 'Worker already running for partition ' . $this->partition,
 			];
 		}
+
+		// Grace period: let the previous worker notice it lost the lock and exit
+		// before we load state from the offsetlog. Without this, both workers
+		// could process the same data.
+		\usleep( (int) ( self::LOCK_CHECK_GRACE_S * 1e6 ) );
 
 		// Disable execution timeout for long-running workers.
 		@\set_time_limit( 0 );
@@ -127,6 +134,9 @@ abstract class WorkerBase {
 	protected float $start_time = 0.0;
 
 	/** @var float */
+	protected float $last_lock_check = 0.0;
+
+	/** @var float */
 	protected float $last_heartbeat_touch = 0.0;
 
 	/** @var float */
@@ -182,38 +192,7 @@ abstract class WorkerBase {
 
 		$now = \microtime( true );
 
-		// Touch heartbeat periodically.
-		if ( $now - $this->last_heartbeat_touch >= self::HEARTBEAT_INTERVAL_S ) {
-			$this->lock->touch();
-			$this->last_heartbeat_touch = $now;
-		}
-
-		// Exit if lock lost or restart requested.
-		if ( $this->lock->should_restart() ) {
-			return true;
-		}
-
-		// Periodic database connection check.
-		if ( $now - $this->last_db_check >= self::DB_CHECK_INTERVAL_S ) {
-			$this->last_db_check = $now;
-			if ( ! $this->check_db_connection() ) {
-				++$this->db_check_failures;
-				if ( $this->db_check_failures >= self::DB_CHECK_MAX_FAILURES ) {
-					// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
-					\error_log( \sprintf(
-						'[EventLogger] %s worker p%d: database connection lost after %d checks, restarting',
-						static::class,
-						$this->partition,
-						$this->db_check_failures
-					) );
-					return true;
-				}
-			} else {
-				$this->db_check_failures = 0;
-			}
-		}
-
-		// Exit if max runtime exceeded.
+		// Exit if max runtime exceeded (cheap float comparison — always check).
 		if ( $now - $this->start_time >= $this->max_runtime ) {
 			// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
 			\error_log( \sprintf(
@@ -223,6 +202,40 @@ abstract class WorkerBase {
 				$now - $this->start_time
 			) );
 			return true;
+		}
+
+		// Fast check: lock still ours / restart requested? Every 250ms.
+		if ( $now - $this->last_lock_check >= self::LOCK_CHECK_INTERVAL_S ) {
+			$this->last_lock_check = $now;
+			if ( $this->lock->should_restart() ) {
+				return true;
+			}
+		}
+
+		// Slow checks: heartbeat touch + db. Every 10s.
+		if ( $now - $this->last_heartbeat_touch >= self::HEARTBEAT_INTERVAL_S ) {
+			$this->last_heartbeat_touch = $now;
+			$this->lock->touch();
+
+			// Periodic database connection check.
+			if ( $now - $this->last_db_check >= self::DB_CHECK_INTERVAL_S ) {
+				$this->last_db_check = $now;
+				if ( ! $this->check_db_connection() ) {
+					++$this->db_check_failures;
+					if ( $this->db_check_failures >= self::DB_CHECK_MAX_FAILURES ) {
+						// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+						\error_log( \sprintf(
+							'[EventLogger] %s worker p%d: database connection lost after %d checks, restarting',
+							static::class,
+							$this->partition,
+							$this->db_check_failures
+						) );
+						return true;
+					}
+				} else {
+					$this->db_check_failures = 0;
+				}
+			}
 		}
 
 		return false;
