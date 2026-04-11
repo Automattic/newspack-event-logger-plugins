@@ -40,6 +40,7 @@ import RequestProfile from '../RequestProfile';
  * @param {string}   props.refreshInterval    Refresh interval state.
  * @param {Function} props.setRefreshInterval Refresh interval setter.
  * @param {Function} props.fetchBreakdown     Fetch dimensional breakdown data.
+ * @param {number}   props.refreshTick        Counter incremented on each main refresh cycle.
  * @param {string}   props.chartMetric        Selected chart metric (lifted from parent).
  * @param {Function} props.setChartMetric     Chart metric setter.
  * @param {Object}   props.categoryData       Category time series data.
@@ -59,6 +60,7 @@ export default function OverviewSection( {
 	refreshInterval,
 	setRefreshInterval,
 	fetchBreakdown,
+	refreshTick,
 	chartMetric,
 	setChartMetric,
 	categoryData,
@@ -116,17 +118,10 @@ export default function OverviewSection( {
 		[ fetchBreakdown ]
 	);
 
+	// Re-fetch breakdown on every main refresh tick, or when breakdown/server changes.
 	useEffect( () => {
 		loadBreakdown( chartBreakdown, serverFilter );
-	}, [ chartBreakdown, serverFilter, loadBreakdown ] );
-
-	// Re-fetch breakdown data every 5 minutes to keep charts current.
-	useEffect( () => {
-		const id = setInterval( () => {
-			loadBreakdown( chartBreakdown, serverFilter );
-		}, 300000 );
-		return () => clearInterval( id );
-	}, [ chartBreakdown, serverFilter, loadBreakdown ] );
+	}, [ chartBreakdown, serverFilter, refreshTick, loadBreakdown ] );
 
 	if ( ! overview ) {
 		return null;

@@ -78,6 +78,9 @@ export default function PerformanceDashboard( { onError } ) {
 	const [ serverBreakdownData, setServerBreakdownData ] = useState( null );
 	const [ serverNames, setServerNames ] = useState( [] );
 
+	// Incremented on each main refresh so child components can sync.
+	const [ refreshTick, setRefreshTick ] = useState( 0 );
+
 	const [ searchQuery, setSearchQuery ] = useState( '' );
 	const [ searchError, setSearchError ] = useState( null );
 	const [ searchLoading, setSearchLoading ] = useState( false );
@@ -341,7 +344,13 @@ export default function PerformanceDashboard( { onError } ) {
 			}
 			if ( serverData ) {
 				setServerBreakdownData( serverData );
+				const names = new Set();
+				Object.values( serverData ).forEach( ( bucket ) => {
+					Object.keys( bucket ).forEach( ( n ) => names.add( n ) );
+				} );
+				setServerNames( Array.from( names ).sort() );
 			}
+			setRefreshTick( ( t ) => t + 1 );
 		};
 
 		const intervalMs = parseInt( refreshInterval, 10 );
@@ -375,22 +384,6 @@ export default function PerformanceDashboard( { onError } ) {
 			cancelled = true;
 		};
 	}, [] ); // eslint-disable-line react-hooks/exhaustive-deps -- apiRef is stable.
-
-	// Auto-refresh server breakdown data every 5 minutes.
-	useEffect( () => {
-		const id = setInterval( async () => {
-			const data = await apiRef.current.fetchBreakdown( 'server' );
-			if ( data ) {
-				setServerBreakdownData( data );
-				const names = new Set();
-				Object.values( data ).forEach( ( bucket ) => {
-					Object.keys( bucket ).forEach( ( n ) => names.add( n ) );
-				} );
-				setServerNames( Array.from( names ).sort() );
-			}
-		}, 300000 );
-		return () => clearInterval( id );
-	}, [] );
 
 	// Merge new requests incrementally to avoid full table re-renders.
 	const mergeUrlDetail = useCallback( ( data, isInitial = false ) => {
@@ -660,6 +653,7 @@ export default function PerformanceDashboard( { onError } ) {
 				refreshInterval={ refreshInterval }
 				setRefreshInterval={ setRefreshInterval }
 				fetchBreakdown={ api.fetchBreakdown }
+				refreshTick={ refreshTick }
 				chartMetric={ chartMetric }
 				setChartMetric={ setChartMetric }
 				categoryData={ categoryData }

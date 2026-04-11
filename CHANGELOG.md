@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - WorkerBase: two-tier `should_restart()` — lock check every 250ms, heartbeat/db every 10s. Was doing 3 syscalls (`clearstatcache` + `file_exists` + `file_get_contents`) per line processed; xdebug profile showed 51.5% of worker CPU in lock I/O. Now 0.9%. Worker throughput 37k → 137k lines/5s
 - WorkerBase: new workers pause 250ms (`LOCK_CHECK_GRACE_S`) after acquiring lock before loading state, giving the previous worker time to notice the lost lock and exit cleanly
 - InflightTracker: same stack collapse — single `[state, message]` tuples, one splice instead of two
+- Performance Dashboard: sync all chart refreshes — aggregate breakdown now fetches on the same cycle as overview/category data via `refreshTick` prop instead of an independent 5-minute timer
+- Performance Dashboard: remove redundant 5-minute server breakdown timer (main refresh loop already fetches it)
 
 ## [2.4.16] - 2026-04-10
 
