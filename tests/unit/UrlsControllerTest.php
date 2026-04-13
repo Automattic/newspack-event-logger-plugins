@@ -608,29 +608,40 @@ class UrlsControllerTest extends \PHPUnit\Framework\TestCase {
 		$ref = new \ReflectionMethod( UrlsController::class, 'scale_categories_by_samples' );
 		$ref->setAccessible( true );
 
-		$data = [ 'count' => 0, 'categories' => [ 'db' => [ 'time' => 100, 'count' => 5, 'samples' => 3 ] ] ];
+		$data = [
+			'count'        => 0,
+			'sum_req_time' => 0,
+			'categories'   => [
+				'db' => [ 'samples' => 0, 'sum_time' => 100, 'sum_count' => 5, 'entries' => [] ],
+			],
+		];
 		$ref->invokeArgs( $this->controller, [ &$data ] );
-		// Should not modify since count is 0.
-		$this->assertSame( 100, $data['categories']['db']['time'] );
+		// Should not convert when count is 0.
+		$this->assertSame( 0, $data['count'] );
 	}
 
 	public function test_scale_categories_by_samples_with_scaling(): void {
 		$ref = new \ReflectionMethod( UrlsController::class, 'scale_categories_by_samples' );
 		$ref->setAccessible( true );
 
+		// Sums-based input (per-URL profile shape):
+		//  - db present in 5 of 10 requests, sum_time = 500 (avg 100/appearance)
+		//  - ext present in all 10, sum_time = 2000 (avg 200/appearance)
 		$data = [
-			'count'      => 10,
-			'categories' => [
-				'db'  => [ 'time' => 100, 'count' => 5, 'samples' => 5 ],
-				'ext' => [ 'time' => 200, 'count' => 8, 'samples' => 10 ],
+			'count'        => 10,
+			'sum_req_time' => 2500,
+			'categories'   => [
+				'db'  => [ 'samples' => 5,  'sum_time' => 500,  'sum_count' => 25, 'entries' => [] ],
+				'ext' => [ 'samples' => 10, 'sum_time' => 2000, 'sum_count' => 80, 'entries' => [] ],
 			],
 		];
 		$ref->invokeArgs( $this->controller, [ &$data ] );
-		// 'db' has samples(5) < total_count(10) so gets scaled: 100 * 5/10 = 50.
-		$this->assertEquals( 50, $data['categories']['db']['time'] );
-		$this->assertEquals( 2.5, $data['categories']['db']['count'] );
-		// 'ext' has samples(10) = total_count(10) so no scaling.
-		$this->assertSame( 200, $data['categories']['ext']['time'] );
+		// db display: time = sum_time / count = 500 / 10 = 50.
+		$this->assertEqualsWithDelta( 50.0, $data['categories']['db']['time'], 0.01 );
+		$this->assertEqualsWithDelta( 2.5,  $data['categories']['db']['count'], 0.01 );
+		// ext display: time = sum_time / count = 2000 / 10 = 200.
+		$this->assertEqualsWithDelta( 200.0, $data['categories']['ext']['time'], 0.01 );
+		$this->assertEqualsWithDelta( 8.0,   $data['categories']['ext']['count'], 0.01 );
 	}
 
 	public function test_get_urls_server_and_search_combined(): void {

@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Newspack Event Jobs
  * Description: Async job queue processing for Event Logger. Allows plugins to queue large jobs for background processing.
- * Version: 2.4.18
+ * Version: 2.4.19
  * Author: Automattic
  * Author URI: https://newspack.com/
  * License: GPL-2.0-or-later
@@ -35,7 +35,7 @@ if ( ! \class_exists( 'Newspack_Event_Logger\\Firehose' ) ) {
 }
 
 if ( ! \defined( 'NEWSPACK_EVENT_LOGGER_JOBS_VERSION' ) ) {
-	\define( 'NEWSPACK_EVENT_LOGGER_JOBS_VERSION', '2.4.18' );
+	\define( 'NEWSPACK_EVENT_LOGGER_JOBS_VERSION', '2.4.19' );
 }
 
 if ( ! \defined( 'EVENT_LOGGER_JOBS_DIR' ) ) {

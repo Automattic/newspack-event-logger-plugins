@@ -133,30 +133,38 @@ class PerformanceControllerBaseTest extends \PHPUnit\Framework\TestCase {
 	}
 
 	public function test_scale_categories_by_samples_no_scaling_needed(): void {
+		// Sums-based input: category present in every request, samples == count.
 		$data = [
-			'count'      => 100,
-			'categories' => [
-				'core' => [ 'time' => 500, 'count' => 100, 'samples' => 100 ],
+			'count'        => 100,
+			'sum_req_time' => 500,
+			'categories'   => [
+				// 100 samples, sum_time = 500 (avg 5/req), sum_count = 100 (avg 1/req).
+				'core' => [ 'samples' => 100, 'sum_time' => 500, 'sum_count' => 100, 'entries' => [] ],
 			],
 		];
 		$this->controller->test_scale_categories( $data );
 
-		// No scaling when samples == count.
-		$this->assertSame( 500, $data['categories']['core']['time'] );
+		// Display: time = sum_time / count = 500 / 100 = 5.
+		$this->assertEqualsWithDelta( 5.0, $data['categories']['core']['time'], 0.01 );
+		$this->assertEqualsWithDelta( 1.0, $data['categories']['core']['count'], 0.01 );
+		$this->assertEqualsWithDelta( 5.0, $data['total_time'], 0.01 );
 	}
 
 	public function test_scale_categories_by_samples_scales_down(): void {
+		// Plugin only present in 50 of 100 profiled requests.
+		// When present, contributed sum_time = 200 (avg 4/appearance), sum_count = 50 (avg 1).
 		$data = [
-			'count'      => 100,
-			'categories' => [
-				'plugin' => [ 'time' => 200, 'count' => 50, 'samples' => 50 ],
+			'count'        => 100,
+			'sum_req_time' => 1000,
+			'categories'   => [
+				'plugin' => [ 'samples' => 50, 'sum_time' => 200, 'sum_count' => 50, 'entries' => [] ],
 			],
 		];
 		$this->controller->test_scale_categories( $data );
 
-		// samples (50) < count (100), so time and count should be halved.
-		$this->assertEquals( 100, $data['categories']['plugin']['time'] );
-		$this->assertEquals( 25, $data['categories']['plugin']['count'] );
+		// Display: time = sum_time / count = 200 / 100 = 2 (avg per profiled request, including absences).
+		$this->assertEqualsWithDelta( 2.0, $data['categories']['plugin']['time'], 0.01 );
+		$this->assertEqualsWithDelta( 0.5, $data['categories']['plugin']['count'], 0.01 );
 	}
 
 	public function test_scale_categories_empty_data(): void {
@@ -167,79 +175,86 @@ class PerformanceControllerBaseTest extends \PHPUnit\Framework\TestCase {
 
 	public function test_scale_categories_zero_count(): void {
 		$data = [
-			'count'      => 0,
-			'categories' => [
-				'core' => [ 'time' => 100, 'count' => 0 ],
+			'count'        => 0,
+			'sum_req_time' => 0,
+			'categories'   => [
+				'core' => [ 'samples' => 0, 'sum_time' => 0, 'sum_count' => 0, 'entries' => [] ],
 			],
 		];
 		$this->controller->test_scale_categories( $data );
-		// Should not modify when count is 0.
-		$this->assertSame( 100, $data['categories']['core']['time'] );
+		// Should not modify when count is 0 — sum_req_time stays present, no total_time.
+		$this->assertSame( 0, $data['count'] );
 	}
 
-	// ── scale_categories: missing samples defaults to total_count ───────
+	// ── scale_categories: pre-converted display data is a no-op ─────────
 
-	public function test_scale_categories_missing_samples_uses_count(): void {
+	public function test_scale_categories_display_shape_passthrough(): void {
 		$data = [
 			'count'      => 100,
+			'total_time' => 500.0,
 			'categories' => [
-				'core' => [ 'time' => 500, 'count' => 100 ],
-				// No 'samples' key — should default to total count, no scaling.
+				'core' => [ 'time' => 5.0, 'count' => 1.0, 'samples' => 100, 'entries' => [] ],
 			],
 		];
+		$before = $data;
 		$this->controller->test_scale_categories( $data );
-		$this->assertSame( 500, $data['categories']['core']['time'] );
-		$this->assertSame( 100, $data['categories']['core']['count'] );
+		// Already in display shape (no sum_req_time present) — must be left alone.
+		$this->assertSame( $before, $data );
 	}
 
 	// ── scale_categories: multiple categories ──────────────────────────
 
 	public function test_scale_categories_multiple_categories(): void {
 		$data = [
-			'count'      => 200,
-			'categories' => [
-				'core'   => [ 'time' => 400, 'count' => 200, 'samples' => 200 ],
-				'plugin' => [ 'time' => 300, 'count' => 100, 'samples' => 100 ],
-				'theme'  => [ 'time' => 200, 'count' => 50, 'samples' => 50 ],
+			'count'        => 200,
+			'sum_req_time' => 1800,
+			'categories'   => [
+				// core: present in all 200 requests; sum_time = 400 (avg 2/req).
+				'core'   => [ 'samples' => 200, 'sum_time' => 400, 'sum_count' => 200, 'entries' => [] ],
+				// plugin: present in 100 requests; sum_time = 300 (avg 3/appearance).
+				'plugin' => [ 'samples' => 100, 'sum_time' => 300, 'sum_count' => 100, 'entries' => [] ],
+				// theme: present in 50 requests; sum_time = 200 (avg 4/appearance).
+				'theme'  => [ 'samples' => 50,  'sum_time' => 200, 'sum_count' => 50,  'entries' => [] ],
 			],
 		];
 		$this->controller->test_scale_categories( $data );
 
-		// core: samples == count, no scaling.
-		$this->assertSame( 400, $data['categories']['core']['time'] );
-
-		// plugin: samples (100) < count (200), scaled by 100/200 = 0.5.
-		$this->assertEquals( 150, $data['categories']['plugin']['time'] );
-		$this->assertEquals( 50, $data['categories']['plugin']['count'] );
-
-		// theme: samples (50) < count (200), scaled by 50/200 = 0.25.
-		$this->assertEquals( 50, $data['categories']['theme']['time'] );
-		$this->assertEquals( 12.5, $data['categories']['theme']['count'] );
+		// core: time = 400 / 200 = 2.
+		$this->assertEqualsWithDelta( 2.0, $data['categories']['core']['time'], 0.01 );
+		// plugin: time = 300 / 200 = 1.5 (avg across all profiled requests, not per-appearance).
+		$this->assertEqualsWithDelta( 1.5, $data['categories']['plugin']['time'], 0.01 );
+		$this->assertEqualsWithDelta( 0.5, $data['categories']['plugin']['count'], 0.01 );
+		// theme: time = 200 / 200 = 1.0.
+		$this->assertEqualsWithDelta( 1.0, $data['categories']['theme']['time'], 0.01 );
+		$this->assertEqualsWithDelta( 0.25, $data['categories']['theme']['count'], 0.01 );
 	}
 
 	// ── scale_categories: negative count ────────────────────────────────
 
 	public function test_scale_categories_negative_count(): void {
 		$data = [
-			'count'      => -5,
-			'categories' => [
-				'core' => [ 'time' => 100, 'count' => 5 ],
+			'count'        => -5,
+			'sum_req_time' => 0,
+			'categories'   => [
+				'core' => [ 'samples' => 0, 'sum_time' => 100, 'sum_count' => 5, 'entries' => [] ],
 			],
 		];
 		$this->controller->test_scale_categories( $data );
 		// Should not modify when count <= 0.
-		$this->assertSame( 100, $data['categories']['core']['time'] );
+		$this->assertSame( -5, $data['count'] );
 	}
 
 	// ── scale_categories: no categories key ─────────────────────────────
 
 	public function test_scale_categories_no_categories_key(): void {
 		$data = [
-			'count' => 100,
+			'count'        => 100,
+			'sum_req_time' => 500,
 		];
 		$this->controller->test_scale_categories( $data );
 		// Should not crash when categories is missing.
 		$this->assertSame( 100, $data['count'] );
+		$this->assertEqualsWithDelta( 5.0, $data['total_time'], 0.01 );
 	}
 
 	// ── rate_limit: no REMOTE_ADDR for anonymous ────────────────────────

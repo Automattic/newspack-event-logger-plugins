@@ -7,12 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.19] - 2026-04-13
+
 ### Changed
 
+- StatsStore / FlameBuilder: leaderboard storage is now bucketed and sums-based (one memcache key per partition+bucket), matching the same retention-windowed pattern used by hourly stats and the URL index. The flat per-partition leaderboard with EMA-clamped running means is gone — each 5-minute bucket holds raw sums (`count`, `sum_req_time`, per-category `samples`, `sum_time`, `sum_count`, entries as `[sum_time, sum_count, samples]`), and `get_merged_leaderboard()` walks all non-expired buckets across partitions, sums them additively, then converts to the display shape `{count, total_time, categories: {time, count, samples, entries}}`. Per-URL `aggregate['profiles']` migrates to the same sums shape so the same conversion path serves both views. Old persisted leaderboard keys orphan naturally via TTL.
 - FlameBuilder: promote the pending bucket into flush arrays on every 30s flush cycle instead of waiting for the 5-minute bucket rotation. Dashboards now see new category/leaderboard/url data within 30s. Safe because `persist_aggregate_stats` merges additively — partial 30s chunks produce the same result as one batch at rotation time.
 
 ### Fixed
 
+- Performance Dashboard: leaderboard category percentages no longer overflow 100% from EMA-clamp saturation. The previous storage incremented `lb.count` and `lcat.samples` independently and clamped both at `EMA_SAMPLE_LIMIT = 1000` — once a 5-second flush window contained >1000 profiled requests AND a category was present in >1000 of them, both saturated and `scale_categories_by_samples` saw `samples == count` even when the true presence rate was much lower. The downscaling step that should have multiplied `cat.time` by the presence ratio became a no-op, leaving heavy categories displayed at their per-appearance time against an unrelated (wall-clock-population) `total_time` — producing ratios in the hundreds of percent. Bucketing eliminates the saturation entirely: each 5-minute bucket holds bounded traffic, no clamping is needed, and the additive-sum merge across buckets preserves the true `samples / count` ratio. Non-callback rows now sum to ≤100% by construction.
 - Performance Dashboard: RequestProfile per-row percentages no longer overflow 100% in the aggregator/URL views. Row percentages now share out the total profiled time (`profiledTime`) rather than the wall clock (`totalMs`), which had mismatched populations (EMA-sampled categories vs. global average wall clock). The Total Profiled row still shows profiled coverage as a fraction of wall clock.
 
 ## [2.4.18] - 2026-04-11

@@ -188,209 +188,258 @@ class StatsStore {
 	}
 
 	// -------------------------------------------------------------------------
-	// Leaderboard
+	// Leaderboard (bucketed, sums-based)
 	// -------------------------------------------------------------------------
+	//
+	// Storage layout: one memcache key per (partition, bucket_key) — and per
+	// (partition, server, bucket_key) for the per-server variant. Each bucket
+	// holds RAW SUMS rather than running means, so additive cross-bucket and
+	// cross-partition merging is exact:
+	//
+	//   {
+	//     count:        int,   // profiled requests in this bucket
+	//     sum_req_time: float, // sum of $req_time values
+	//     categories: {
+	//       {cat}: {
+	//         samples:   int,   // requests containing this category
+	//         sum_time:  float, // sum of per-request exclusive cat.time
+	//         sum_count: float, // sum of per-request invocation counts
+	//         entries: { {name}: [sum_time, sum_count, samples] }
+	//       }
+	//     }
+	//   }
+	//
+	// The retention window is bounded by the hourly bucket cutoff. Dashboards
+	// read via get_merged_leaderboard(), which walks all non-expired buckets
+	// across all partitions, sums them, and converts to the display shape
+	// {count, total_time, categories: {cat: {time, count, samples, entries}}}
+	// where 'time' and 'count' are averages across ALL profiled requests
+	// (avoiding the EMA-clamp bug that the old flat running-mean storage had).
 
 	/**
-	 * Get leaderboard for a partition.
+	 * Get a single leaderboard bucket for a partition.
 	 *
-	 * @param int $partition Partition number.
-	 * @return array|null Leaderboard data or null if not found.
+	 * @param int    $partition  Partition number.
+	 * @param string $bucket_key 5-min bucket key (Y-m-d-H-NN).
+	 * @return array|null Bucket data or null if not found.
 	 */
-	public static function get_leaderboard( int $partition ): ?array {
-		$val = Memcached::get( self::key( "p{$partition}", 'leaderboard' ) );
+	public static function get_leaderboard_bucket( int $partition, string $bucket_key ): ?array {
+		$val = Memcached::get( self::key( "p{$partition}", 'lb', $bucket_key ) );
 		return \is_array( $val ) ? $val : null;
 	}
 
 	/**
-	 * Set leaderboard for a partition.
+	 * Set a single leaderboard bucket for a partition.
 	 *
-	 * @param int   $partition Partition number.
-	 * @param array $data      Leaderboard data.
+	 * @param int    $partition  Partition number.
+	 * @param string $bucket_key 5-min bucket key.
+	 * @param array  $data       Bucket data (sums).
 	 * @return bool Success.
 	 */
-	public static function set_leaderboard( int $partition, array $data ): bool {
-		return Memcached::set( self::key( "p{$partition}", 'leaderboard' ), $data, self::ttl() );
+	public static function set_leaderboard_bucket( int $partition, string $bucket_key, array $data ): bool {
+		return Memcached::set( self::key( "p{$partition}", 'lb', $bucket_key ), $data, self::ttl() );
 	}
 
 	/**
-	 * Get merged leaderboard from all partitions.
+	 * Get a single per-server leaderboard bucket for a partition.
 	 *
-	 * @return array|null Merged leaderboard data or null if none.
+	 * @param int    $partition  Partition number.
+	 * @param string $server     Server name.
+	 * @param string $bucket_key 5-min bucket key.
+	 * @return array|null Bucket data or null if not found.
+	 */
+	public static function get_server_leaderboard_bucket( int $partition, string $server, string $bucket_key ): ?array {
+		$val = Memcached::get( self::key( "p{$partition}", 'lb_s', $server, $bucket_key ) );
+		return \is_array( $val ) ? $val : null;
+	}
+
+	/**
+	 * Set a single per-server leaderboard bucket for a partition.
+	 *
+	 * @param int    $partition  Partition number.
+	 * @param string $server     Server name.
+	 * @param string $bucket_key 5-min bucket key.
+	 * @param array  $data       Bucket data (sums).
+	 * @return bool Success.
+	 */
+	public static function set_server_leaderboard_bucket( int $partition, string $server, string $bucket_key, array $data ): bool {
+		return Memcached::set( self::key( "p{$partition}", 'lb_s', $server, $bucket_key ), $data, self::ttl() );
+	}
+
+	/**
+	 * Get merged leaderboard across all partitions and buckets in the retention window.
+	 *
+	 * @return array|null Display-shaped leaderboard data, or null if no data.
 	 */
 	public static function get_merged_leaderboard(): ?array {
-		$merged = null;
-
-		for ( $p = 0; $p < self::$num_partitions; $p++ ) {
-			$lb = self::get_leaderboard( $p );
-			if ( ! $lb ) {
-				continue;
-			}
-
-			if ( null === $merged ) {
-				$merged = $lb;
-				continue;
-			}
-
-			// Merge category data.
-			foreach ( $lb['categories'] ?? [] as $cat => $data ) {
-				if ( ! isset( $merged['categories'][ $cat ] ) ) {
-					$merged['categories'][ $cat ] = $data;
-					continue;
-				}
-
-				$m_cat = &$merged['categories'][ $cat ];
-
-				// Merge samples (sum).
-				$old_samples       = $m_cat['samples'] ?? 0;
-				$new_samples       = $data['samples'] ?? 0;
-				$total_samples     = $old_samples + $new_samples;
-				$m_cat['samples']  = $total_samples;
-
-				// Weighted average for time and count.
-				if ( $total_samples > 0 ) {
-					$m_cat['time']  = ( ( $m_cat['time'] ?? 0 ) * $old_samples + ( $data['time'] ?? 0 ) * $new_samples ) / $total_samples;
-					$m_cat['count'] = ( ( $m_cat['count'] ?? 0 ) * $old_samples + ( $data['count'] ?? 0 ) * $new_samples ) / $total_samples;
-				}
-
-				// Merge entries.
-				foreach ( $data['entries'] ?? [] as $name => $entry ) {
-					if ( ! isset( $m_cat['entries'][ $name ] ) ) {
-						$m_cat['entries'][ $name ] = $entry;
-						continue;
-					}
-
-					$e_old       = $m_cat['entries'][ $name ];
-					$e_old_s     = $e_old[2] ?? 0;
-					$e_new_s     = $entry[2] ?? 0;
-					$e_total_s   = $e_old_s + $e_new_s;
-
-					if ( $e_total_s > 0 ) {
-						$m_cat['entries'][ $name ] = [
-							( ( $e_old[0] ?? 0 ) * $e_old_s + ( $entry[0] ?? 0 ) * $e_new_s ) / $e_total_s,
-							( ( $e_old[1] ?? 0 ) * $e_old_s + ( $entry[1] ?? 0 ) * $e_new_s ) / $e_total_s,
-							$e_total_s,
-						];
-					}
-				}
-			}
-
-			// Sum total count.
-			$merged['count'] = ( $merged['count'] ?? 0 ) + ( $lb['count'] ?? 0 );
-
-			// Weighted average for total_time.
-			$old_count = $merged['count'] - ( $lb['count'] ?? 0 );
-			$new_count = $lb['count'] ?? 0;
-			$total     = $old_count + $new_count;
-			if ( $total > 0 ) {
-				$merged['total_time'] = ( ( $merged['total_time'] ?? 0 ) * $old_count + ( $lb['total_time'] ?? 0 ) * $new_count ) / $total;
-			}
-		}
-
-		return $merged;
-	}
-
-	// -------------------------------------------------------------------------
-	// Per-Server Leaderboard
-	// -------------------------------------------------------------------------
-
-	/**
-	 * Get per-server leaderboard for a partition.
-	 *
-	 * @param int    $partition Partition number.
-	 * @param string $server   Server name.
-	 * @return array|null Leaderboard data or null if not found.
-	 */
-	public static function get_server_leaderboard( int $partition, string $server ): ?array {
-		$val = Memcached::get( self::key( "p{$partition}", 'leaderboard', $server ) );
-		return \is_array( $val ) ? $val : null;
+		return self::merge_leaderboard_internal( '' );
 	}
 
 	/**
-	 * Set per-server leaderboard for a partition.
-	 *
-	 * @param int    $partition Partition number.
-	 * @param string $server   Server name.
-	 * @param array  $data     Leaderboard data.
-	 * @return bool Success.
-	 */
-	public static function set_server_leaderboard( int $partition, string $server, array $data ): bool {
-		return Memcached::set( self::key( "p{$partition}", 'leaderboard', $server ), $data, self::ttl() );
-	}
-
-	/**
-	 * Get merged per-server leaderboard across all partitions.
+	 * Get merged per-server leaderboard across all partitions and buckets in the retention window.
 	 *
 	 * @param string $server Server name.
-	 * @return array|null Merged leaderboard data or null if none.
+	 * @return array|null Display-shaped leaderboard data, or null if no data.
 	 */
 	public static function get_merged_server_leaderboard( string $server ): ?array {
-		$merged = null;
+		return self::merge_leaderboard_internal( $server );
+	}
+
+	/**
+	 * Walk retention buckets across all partitions, sum them, and convert
+	 * sums to the display shape expected by the frontend.
+	 *
+	 * @param string $server Server name (empty for global).
+	 * @return array|null Display data or null if no data.
+	 */
+	private static function merge_leaderboard_internal( string $server ): ?array {
+		$buckets      = self::get_retention_buckets();
+		$total_count  = 0;
+		$sum_req_time = 0.0;
+		// Per-category sums: keyed by category name, each value has samples, sum_time, sum_count, entries.
+		$sums         = [];
 
 		for ( $p = 0; $p < self::$num_partitions; $p++ ) {
-			$lb = self::get_server_leaderboard( $p, $server );
-			if ( ! $lb ) {
-				continue;
+			$keys = [];
+			foreach ( $buckets as $bk ) {
+				$keys[] = '' === $server
+					? self::key( "p{$p}", 'lb', $bk )
+					: self::key( "p{$p}", 'lb_s', $server, $bk );
 			}
+			$results = Memcached::get_multi( $keys );
 
-			if ( null === $merged ) {
-				$merged = $lb;
-				continue;
-			}
-
-			// Merge category data (same logic as get_merged_leaderboard).
-			foreach ( $lb['categories'] ?? [] as $cat => $data ) {
-				if ( ! isset( $merged['categories'][ $cat ] ) ) {
-					$merged['categories'][ $cat ] = $data;
+			foreach ( $results as $cache_key => $lb ) {
+				if ( ! \is_array( $lb ) ) {
 					continue;
 				}
+				$total_count  += (int) ( $lb['count'] ?? 0 );
+				$sum_req_time += (float) ( $lb['sum_req_time'] ?? 0 );
 
-				$m_cat = &$merged['categories'][ $cat ];
-
-				$old_samples      = $m_cat['samples'] ?? 0;
-				$new_samples      = $data['samples'] ?? 0;
-				$total_samples    = $old_samples + $new_samples;
-				$m_cat['samples'] = $total_samples;
-
-				if ( $total_samples > 0 ) {
-					$m_cat['time']  = ( ( $m_cat['time'] ?? 0 ) * $old_samples + ( $data['time'] ?? 0 ) * $new_samples ) / $total_samples;
-					$m_cat['count'] = ( ( $m_cat['count'] ?? 0 ) * $old_samples + ( $data['count'] ?? 0 ) * $new_samples ) / $total_samples;
-				}
-
-				foreach ( $data['entries'] ?? [] as $name => $entry ) {
-					if ( ! isset( $m_cat['entries'][ $name ] ) ) {
-						$m_cat['entries'][ $name ] = $entry;
-						continue;
-					}
-
-					$e_old     = $m_cat['entries'][ $name ];
-					$e_old_s   = $e_old[2] ?? 0;
-					$e_new_s   = $entry[2] ?? 0;
-					$e_total_s = $e_old_s + $e_new_s;
-
-					if ( $e_total_s > 0 ) {
-						$m_cat['entries'][ $name ] = [
-							( ( $e_old[0] ?? 0 ) * $e_old_s + ( $entry[0] ?? 0 ) * $e_new_s ) / $e_total_s,
-							( ( $e_old[1] ?? 0 ) * $e_old_s + ( $entry[1] ?? 0 ) * $e_new_s ) / $e_total_s,
-							$e_total_s,
+				foreach ( ( $lb['categories'] ?? [] ) as $cat => $data ) {
+					if ( ! isset( $sums[ $cat ] ) ) {
+						$sums[ $cat ] = [
+							'samples'   => 0,
+							'sum_time'  => 0.0,
+							'sum_count' => 0.0,
+							'entries'   => [],
 						];
 					}
+					$c = &$sums[ $cat ];
+					$c['samples']   += (int) ( $data['samples'] ?? 0 );
+					$c['sum_time']  += (float) ( $data['sum_time'] ?? 0 );
+					$c['sum_count'] += (float) ( $data['sum_count'] ?? 0 );
+
+					foreach ( ( $data['entries'] ?? [] ) as $name => $entry ) {
+						if ( ! isset( $c['entries'][ $name ] ) ) {
+							$c['entries'][ $name ] = [ 0.0, 0.0, 0 ];
+						}
+						$c['entries'][ $name ][0] += (float) ( $entry[0] ?? 0 );
+						$c['entries'][ $name ][1] += (float) ( $entry[1] ?? 0 );
+						$c['entries'][ $name ][2] += (int) ( $entry[2] ?? 0 );
+					}
+					unset( $c );
 				}
-			}
-
-			// Sum total count.
-			$merged['count'] = ( $merged['count'] ?? 0 ) + ( $lb['count'] ?? 0 );
-
-			// Weighted average for total_time.
-			$old_count = $merged['count'] - ( $lb['count'] ?? 0 );
-			$new_count = $lb['count'] ?? 0;
-			$total     = $old_count + $new_count;
-			if ( $total > 0 ) {
-				$merged['total_time'] = ( ( $merged['total_time'] ?? 0 ) * $old_count + ( $lb['total_time'] ?? 0 ) * $new_count ) / $total;
 			}
 		}
 
-		return $merged;
+		if ( 0 === $total_count ) {
+			return null;
+		}
+
+		return self::sums_to_display( $total_count, $sum_req_time, $sums );
+	}
+
+	/**
+	 * Convert summed leaderboard data to the display shape expected by the frontend.
+	 *
+	 * - 'time'  = sum_time  / total_count — avg exclusive cat time per request across ALL profiled requests.
+	 * - 'count' = sum_count / total_count — avg invocation count per request across ALL profiled requests.
+	 * - entries use per-appearance averages (sum / samples) to match the previous display convention.
+	 *
+	 * @param int   $total_count  Total profiled requests.
+	 * @param float $sum_req_time Sum of per-request $req_time values.
+	 * @param array $sums         Per-category sums keyed by category name.
+	 * @return array Display-shaped leaderboard data.
+	 */
+	public static function sums_to_display( int $total_count, float $sum_req_time, array $sums ): array {
+		$display_cats = [];
+		foreach ( $sums as $cat => $data ) {
+			$samples   = (int) ( $data['samples'] ?? 0 );
+			$sum_time  = (float) ( $data['sum_time'] ?? 0 );
+			$sum_count = (float) ( $data['sum_count'] ?? 0 );
+
+			$entries_out = [];
+			foreach ( ( $data['entries'] ?? [] ) as $name => $entry ) {
+				$e_samples = (int) ( $entry[2] ?? 0 );
+				if ( $e_samples > 0 ) {
+					$entries_out[ $name ] = [
+						( $entry[0] ?? 0 ) / $e_samples,
+						( $entry[1] ?? 0 ) / $e_samples,
+						$e_samples,
+					];
+				}
+			}
+
+			// Cap entries to top N by avg time (hysteresis isn't needed here — cap is per-read).
+			if ( \count( $entries_out ) > 100 ) {
+				\uasort( $entries_out, fn( $a, $b ) => ( $b[0] ?? 0 ) <=> ( $a[0] ?? 0 ) );
+				$entries_out = \array_slice( $entries_out, 0, 50, true );
+			}
+
+			$display_cats[ $cat ] = [
+				'time'    => $total_count > 0 ? $sum_time / $total_count : 0.0,
+				'count'   => $total_count > 0 ? $sum_count / $total_count : 0.0,
+				'samples' => $samples,
+				'entries' => $entries_out,
+			];
+		}
+
+		return [
+			'count'      => $total_count,
+			'total_time' => $total_count > 0 ? $sum_req_time / $total_count : 0.0,
+			'categories' => $display_cats,
+		];
+	}
+
+	/**
+	 * Additive merge of one leaderboard bucket's sums into another (modifying $dst).
+	 *
+	 * Used at persist time to combine the current flush's bucket with the
+	 * already-persisted bucket of the same key.
+	 *
+	 * @param array $dst Destination bucket (modified by reference).
+	 * @param array $src Source bucket to merge in.
+	 * @return void
+	 */
+	public static function merge_leaderboard_bucket( array &$dst, array $src ): void {
+		$dst['count']        = (int)   ( $dst['count']        ?? 0 ) + (int)   ( $src['count']        ?? 0 );
+		$dst['sum_req_time'] = (float) ( $dst['sum_req_time'] ?? 0 ) + (float) ( $src['sum_req_time'] ?? 0 );
+		if ( ! isset( $dst['categories'] ) ) {
+			$dst['categories'] = [];
+		}
+		foreach ( ( $src['categories'] ?? [] ) as $cat => $data ) {
+			if ( ! isset( $dst['categories'][ $cat ] ) ) {
+				$dst['categories'][ $cat ] = [
+					'samples'   => 0,
+					'sum_time'  => 0.0,
+					'sum_count' => 0.0,
+					'entries'   => [],
+				];
+			}
+			$c = &$dst['categories'][ $cat ];
+			$c['samples']   += (int)   ( $data['samples']   ?? 0 );
+			$c['sum_time']  += (float) ( $data['sum_time']  ?? 0 );
+			$c['sum_count'] += (float) ( $data['sum_count'] ?? 0 );
+			foreach ( ( $data['entries'] ?? [] ) as $name => $entry ) {
+				if ( ! isset( $c['entries'][ $name ] ) ) {
+					$c['entries'][ $name ] = [ 0.0, 0.0, 0 ];
+				}
+				$c['entries'][ $name ][0] += (float) ( $entry[0] ?? 0 );
+				$c['entries'][ $name ][1] += (float) ( $entry[1] ?? 0 );
+				$c['entries'][ $name ][2] += (int)   ( $entry[2] ?? 0 );
+			}
+			unset( $c );
+		}
 	}
 
 	// -------------------------------------------------------------------------

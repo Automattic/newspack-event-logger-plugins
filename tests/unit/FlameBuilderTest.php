@@ -148,12 +148,17 @@ class FlameBuilderTest extends TestCase {
 	public function test_init_creates_required_context_keys(): void {
 		$context = $this->make_context();
 		$this->assertInstanceOf( LruCache::class, $context['stats_cache'] );
-		$this->assertNull( $context['global_leaderboard'] );
+		$this->assertSame( [], $context['leaderboard_stats'] );
+		$this->assertSame( [], $context['leaderboard_by_server_stats'] );
 		$this->assertSame( [], $context['url_stats'] );
 		$this->assertSame( [], $context['hourly_stats'] );
 		$this->assertSame( [], $context['dim_stats'] );
 		$this->assertSame( [], $context['url_dim_stats'] );
 		$this->assertSame( false, $context['is_hub'] );
+		// Pending leaderboard is initialized with empty sums.
+		$this->assertSame( 0, $context['pending']['leaderboard']['count'] );
+		$this->assertSame( [], $context['pending']['leaderboard']['categories'] );
+		$this->assertSame( [], $context['pending']['leaderboard_by_server'] );
 	}
 
 	public function test_init_recognizes_hub_mode(): void {
@@ -464,20 +469,24 @@ class FlameBuilderTest extends TestCase {
 
 		$this->accumulate( $url_hash, $flame, $profiles, $request, $context );
 
-		// Per-URL profiles.
+		// Per-URL profiles (sums-based).
 		$agg = $context['stats_cache']->get( $url_hash );
 		$this->assertArrayHasKey( 'profiles', $agg );
 		$this->assertSame( 1, $agg['profiles']['count'] );
+		$this->assertEqualsWithDelta( 130.0, $agg['profiles']['sum_req_time'], 0.01 );
 		$this->assertArrayHasKey( 'wp_head', $agg['profiles']['categories'] );
 		$this->assertArrayHasKey( 'the_content', $agg['profiles']['categories'] );
-		$this->assertEqualsWithDelta( 50.0, $agg['profiles']['categories']['wp_head']['time'], 0.01 );
+		// One request: sum_time equals the request's contribution.
+		$this->assertEqualsWithDelta( 50.0, $agg['profiles']['categories']['wp_head']['sum_time'], 0.01 );
+		$this->assertSame( 1, $agg['profiles']['categories']['wp_head']['samples'] );
 
-		// Global leaderboard.
-		$lb = $context['global_leaderboard'];
-		$this->assertNotNull( $lb );
+		// Pending leaderboard (sums-based).
+		$lb = $context['pending']['leaderboard'];
 		$this->assertSame( 1, $lb['count'] );
+		$this->assertEqualsWithDelta( 130.0, $lb['sum_req_time'], 0.01, 'sum_req_time = 50 + 80' );
 		$this->assertArrayHasKey( 'wp_head', $lb['categories'] );
-		$this->assertEqualsWithDelta( 130.0, $lb['total_time'], 0.01, 'Total time = 50 + 80' );
+		$this->assertEqualsWithDelta( 50.0, $lb['categories']['wp_head']['sum_time'], 0.01 );
+		$this->assertSame( 1, $lb['categories']['wp_head']['samples'] );
 	}
 
 	public function test_timed_out_requests_exclude_profiles(): void {
@@ -495,8 +504,9 @@ class FlameBuilderTest extends TestCase {
 
 		$this->accumulate( $url_hash, $flame, $profiles, $request, $context );
 
-		// Global leaderboard should remain null (profiles skipped for timed-out requests).
-		$this->assertNull( $context['global_leaderboard'] );
+		// Pending leaderboard should remain empty (profiles skipped for timed-out requests).
+		$this->assertSame( 0, $context['pending']['leaderboard']['count'] );
+		$this->assertSame( [], $context['pending']['leaderboard']['categories'] );
 	}
 
 	// ── accumulate_all_stats — dimensional stats ──────────────────────────
@@ -749,8 +759,8 @@ class FlameBuilderTest extends TestCase {
 		FlameBuilder::flush( $context );
 
 		// Accumulators should be cleared.
-		$this->assertNull( $context['global_leaderboard'] );
-		$this->assertSame( [], $context['leaderboard_by_server'] );
+		$this->assertSame( [], $context['leaderboard_stats'] );
+		$this->assertSame( [], $context['leaderboard_by_server_stats'] );
 		$this->assertSame( [], $context['url_stats'] );
 		$this->assertSame( [], $context['hourly_stats'] );
 		$this->assertSame( [], $context['dim_stats'] );
@@ -850,7 +860,9 @@ class FlameBuilderTest extends TestCase {
 
 	public function test_process_full_lifecycle(): void {
 		$context = $this->make_context();
+		// Use a unique URL so memcache state from other tests doesn't carry over.
 		$request = $this->make_request( [
+			'url'         => '/test-process-full-lifecycle',
 			'duration_ms' => 250.0,
 			'status_code' => 200,
 			'peak_mb'     => 15.0,
@@ -873,7 +885,10 @@ class FlameBuilderTest extends TestCase {
 		// Verify all accumulator paths were exercised.
 		$this->assertNotEmpty( $context['url_stats'], 'url_stats should be populated' );
 		$this->assertNotEmpty( $context['hourly_stats'], 'hourly_stats should be populated' );
-		$this->assertNotNull( $context['global_leaderboard'], 'leaderboard should be populated' );
+		// Leaderboard stats should hold one bucket after promote_pending.
+		$this->assertNotEmpty( $context['leaderboard_stats'], 'leaderboard should be populated' );
+		$bucket = \reset( $context['leaderboard_stats'] );
+		$this->assertSame( 1, $bucket['count'] );
 
 		// Verify flame was cached.
 		$url_hash = RequestBuilder::url_hash( $request['url'] );
@@ -922,13 +937,13 @@ class FlameBuilderTest extends TestCase {
 
 		// Verify data accumulated.
 		$this->assertNotEmpty( $context['hourly_stats'] );
-		$this->assertNotNull( $context['global_leaderboard'] );
+		$this->assertNotEmpty( $context['leaderboard_stats'] );
 
 		// Flush should reset.
 		FlameBuilder::flush( $context );
 
-		$this->assertNull( $context['global_leaderboard'] );
-		$this->assertSame( [], $context['leaderboard_by_server'] );
+		$this->assertSame( [], $context['leaderboard_stats'] );
+		$this->assertSame( [], $context['leaderboard_by_server_stats'] );
 		$this->assertSame( [], $context['url_stats'] );
 		$this->assertSame( [], $context['hourly_stats'] );
 	}
@@ -1058,7 +1073,11 @@ class FlameBuilderTest extends TestCase {
 
 		$this->accumulate( $url_hash, $flame, $profiles, $request, $context );
 
-		$this->assertArrayHasKey( 'web3.example.com', $context['leaderboard_by_server'] );
+		// Per-server leaderboard now lives in pending until promote.
+		$this->assertArrayHasKey( 'web3.example.com', $context['pending']['leaderboard_by_server'] );
+		$slb = $context['pending']['leaderboard_by_server']['web3.example.com'];
+		$this->assertSame( 1, $slb['count'] );
+		$this->assertArrayHasKey( 'wp_head', $slb['categories'] );
 	}
 
 	// ── Constants ────────────────────────────────────────────────────────
@@ -1155,59 +1174,70 @@ class FlameBuilderTest extends TestCase {
 		$this->require_memcached();
 
 		$context  = $this->make_context();
-		$request  = $this->make_request( [ 'duration_ms' => 200.0 ] );
+		$ts       = \time();
+		$request  = $this->make_request( [ 'duration_ms' => 200.0, 'timestamp' => (float) $ts ] );
 		$url_hash = RequestBuilder::url_hash( $request['url'] );
 		$flame    = [ 'name' => 'request', 'value' => 200.0, 'children' => [] ];
 		$profiles = [
 			'wp_head' => [ 'time' => 50.0, 'count' => 3, 'ts' => \time(), 'entries' => [] ],
 		];
 		$this->accumulate( $url_hash, $flame, $profiles, $request, $context );
+		$this->promote_pending( $context );
 
 		self::call_private( 'persist_aggregate_stats', [ &$context ] );
 
-		$lb = StatsStore::get_leaderboard( 0 );
+		$bk = self::call_private( 'bucket_key', [ $ts ] );
+		$lb = StatsStore::get_leaderboard_bucket( 0, $bk );
 		$this->assertNotNull( $lb );
 		$this->assertSame( 1, $lb['count'] );
 		$this->assertArrayHasKey( 'wp_head', $lb['categories'] );
+		// Stored as sums: sum_time = 50 (one request at 50).
+		$this->assertEqualsWithDelta( 50.0, $lb['categories']['wp_head']['sum_time'], 0.01 );
+		$this->assertSame( 1, $lb['categories']['wp_head']['samples'] );
 	}
 
 	public function test_persist_aggregate_stats_merges_leaderboard_categories(): void {
 		$this->require_memcached();
 
 		$context = $this->make_context();
+		$ts      = \time();
+		$bk      = self::call_private( 'bucket_key', [ $ts ] );
 
-		// Pre-populate leaderboard in memcache.
+		// Pre-populate leaderboard bucket in memcache (sums-based).
 		$existing_lb = [
-			'count'      => 5,
-			'total_time' => 100.0,
-			'categories' => [
+			'count'        => 5,
+			'sum_req_time' => 200.0,
+			'categories'   => [
 				'wp_head' => [
-					'time'    => 40.0,
-					'count'   => 2.0,
-					'samples' => 5,
-					'entries' => [],
+					'samples'   => 5,
+					'sum_time'  => 200.0, // 40 avg * 5 requests
+					'sum_count' => 10.0,  // 2 avg * 5 requests
+					'entries'   => [],
 				],
 			],
 		];
-		StatsStore::set_leaderboard( 0, $existing_lb );
+		StatsStore::set_leaderboard_bucket( 0, $bk, $existing_lb );
 
 		// Accumulate data with a wp_head profile to merge.
-		$request  = $this->make_request( [ 'duration_ms' => 150.0 ] );
+		$request  = $this->make_request( [ 'duration_ms' => 150.0, 'timestamp' => (float) $ts ] );
 		$url_hash = RequestBuilder::url_hash( $request['url'] );
 		$flame    = [ 'name' => 'request', 'value' => 150.0, 'children' => [] ];
 		$profiles = [
 			'wp_head' => [ 'time' => 80.0, 'count' => 4, 'ts' => \time(), 'entries' => [] ],
 		];
 		$this->accumulate( $url_hash, $flame, $profiles, $request, $context );
+		$this->promote_pending( $context );
 
 		self::call_private( 'persist_aggregate_stats', [ &$context ] );
 
-		$lb = StatsStore::get_leaderboard( 0 );
+		$lb = StatsStore::get_leaderboard_bucket( 0, $bk );
 		$this->assertNotNull( $lb );
 		// Existing count=5 + new count=1 = 6 total.
 		$this->assertSame( 6, $lb['count'] );
-		// wp_head samples should increase.
-		$this->assertGreaterThan( 5, $lb['categories']['wp_head']['samples'] );
+		// wp_head samples = 5 + 1 = 6.
+		$this->assertSame( 6, $lb['categories']['wp_head']['samples'] );
+		// wp_head sum_time = 200 + 80 = 280.
+		$this->assertEqualsWithDelta( 280.0, $lb['categories']['wp_head']['sum_time'], 0.01 );
 	}
 
 	public function test_persist_aggregate_stats_writes_url_index(): void {
@@ -1311,9 +1341,11 @@ class FlameBuilderTest extends TestCase {
 		// (FlameBuilder::init re-inits StatsStore with hub config's empty servers).
 		$this->require_memcached();
 
+		$ts       = \time();
 		$request  = $this->make_request( [
 			'duration_ms' => 200.0,
 			'server_name' => 'web1.example.com',
+			'timestamp'   => (float) $ts,
 		] );
 		$url_hash = RequestBuilder::url_hash( $request['url'] );
 		$flame    = [ 'name' => 'request', 'value' => 200.0, 'children' => [] ];
@@ -1321,17 +1353,20 @@ class FlameBuilderTest extends TestCase {
 			'wp_head' => [ 'time' => 80.0, 'count' => 2, 'ts' => \time(), 'entries' => [] ],
 		];
 		$this->accumulate( $url_hash, $flame, $profiles, $request, $context );
+		$this->promote_pending( $context );
 
 		self::call_private( 'persist_aggregate_stats', [ &$context ] );
 
-		$slb = StatsStore::get_server_leaderboard( 0, 'web1.example.com' );
+		$bk  = self::call_private( 'bucket_key', [ $ts ] );
+		$slb = StatsStore::get_server_leaderboard_bucket( 0, 'web1.example.com', $bk );
 		$this->assertNotNull( $slb );
 		$this->assertArrayHasKey( 'wp_head', $slb['categories'] );
+		$this->assertSame( 1, $slb['count'] );
 	}
 
-	// ── accumulate — profile entries with EMA merge ─────────────────────
+	// ── accumulate — profile entries accumulated as sums ────────────────
 
-	public function test_profile_entries_accumulated_with_ema(): void {
+	public function test_profile_entries_accumulated_as_sums(): void {
 		$context  = $this->make_context();
 		$url_hash = RequestBuilder::url_hash( '/entry-test' );
 
@@ -1364,17 +1399,20 @@ class FlameBuilderTest extends TestCase {
 		$flame2   = [ 'name' => 'request', 'value' => 80.0, 'children' => [] ];
 		$this->accumulate( $url_hash, $flame2, $profiles2, $request2, $context );
 
-		// Check per-URL profile entries have both requests merged.
+		// Per-URL profile entries store sums, not running means.
 		$agg = $context['stats_cache']->get( $url_hash );
 		$this->assertArrayHasKey( 'do_blocks', $agg['profiles']['categories']['the_content']['entries'] );
 		$entry = $agg['profiles']['categories']['the_content']['entries']['do_blocks'];
-		$this->assertSame( 2, $entry[2] ); // seen_count = 2.
-		// EMA: 20 + (40 - 20) / 2 = 30.
-		$this->assertEqualsWithDelta( 30.0, $entry[0], 0.01 );
+		$this->assertSame( 2, $entry[2] ); // samples = 2.
+		// Sum: 20 + 40 = 60. (Display-time conversion divides by samples to get avg = 30.)
+		$this->assertEqualsWithDelta( 60.0, $entry[0], 0.01 );
 
-		// Check global leaderboard entries.
-		$lb = $context['global_leaderboard'];
+		// Pending leaderboard entries (also sums).
+		$lb = $context['pending']['leaderboard'];
 		$this->assertArrayHasKey( 'do_blocks', $lb['categories']['the_content']['entries'] );
+		$lentry = $lb['categories']['the_content']['entries']['do_blocks'];
+		$this->assertSame( 2, $lentry[2] );
+		$this->assertEqualsWithDelta( 60.0, $lentry[0], 0.01 );
 	}
 
 	// ── accumulate — reservoir sampling of durations ─────────────────────

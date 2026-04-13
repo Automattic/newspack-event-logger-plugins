@@ -75,10 +75,10 @@ class FlameBuilder {
 	 */
 	public static function init( array &$context, ?array $saved_state ): void {
 		$context['stats_cache']                 = new LruCache( self::STATS_CACHE_BUCKET_SIZE, self::STATS_CACHE_NUM_BUCKETS );
-		$context['global_leaderboard']          = null;
-		$context['leaderboard_by_server']       = [];
 		$context['url_stats']                   = [];
 		$context['hourly_stats']                = [];
+		$context['leaderboard_stats']           = []; // bucket_key => bucket sums
+		$context['leaderboard_by_server_stats'] = []; // server => bucket_key => bucket sums
 		$context['last_flush_time']             = \microtime( true );
 		$context['auto_disable_threshold']      = 0;
 		$context['auto_protect_time_threshold'] = 0.0;
@@ -102,14 +102,16 @@ class FlameBuilder {
 		// Persisted via save_state/offsetlog across worker restarts.
 		$context['pending_bucket']              = '';
 		$context['pending'] = [
-			'hourly'        => [],
-			'dim'           => [],
-			'dim_by_server' => [],
-			'url_dim'       => [],
-			'url_stats'     => [],
-			'cat'           => [],
-			'cat_by_server' => [],
-			'cat_by_url'    => [],
+			'hourly'               => [],
+			'dim'                  => [],
+			'dim_by_server'        => [],
+			'url_dim'              => [],
+			'url_stats'            => [],
+			'cat'                  => [],
+			'cat_by_server'        => [],
+			'cat_by_url'           => [],
+			'leaderboard'          => [ 'count' => 0, 'sum_req_time' => 0.0, 'categories' => [] ],
+			'leaderboard_by_server' => [], // server => { count, sum_req_time, categories }
 		];
 
 		// Restore pending state from previous worker run.
@@ -234,16 +236,16 @@ class FlameBuilder {
 		self::refresh_significant_events( $context, false );
 
 		$context['stats_cache']->flush();
-		$context['global_leaderboard']    = null;
-		$context['leaderboard_by_server'] = [];
-		$context['url_stats']             = [];
-		$context['hourly_stats']          = [];
-		$context['dim_stats']             = [];
-		$context['dim_stats_by_server']   = [];
-		$context['url_dim_stats']         = [];
-		$context['cat_stats']             = [];
-		$context['cat_stats_by_server']   = [];
-		$context['url_cat_stats']         = [];
+		$context['url_stats']                   = [];
+		$context['hourly_stats']                = [];
+		$context['leaderboard_stats']           = [];
+		$context['leaderboard_by_server_stats'] = [];
+		$context['dim_stats']                   = [];
+		$context['dim_stats_by_server']         = [];
+		$context['url_dim_stats']               = [];
+		$context['cat_stats']                   = [];
+		$context['cat_stats_by_server']         = [];
+		$context['url_cat_stats']               = [];
 	}
 
 	/**
@@ -523,13 +525,24 @@ class FlameBuilder {
 					'children' => [],
 				],
 				'profiles' => [
-					'count'      => 0,
-					'categories' => [],
+					'count'        => 0,
+					'sum_req_time' => 0.0,
+					'categories'   => [],
 				],
 			];
 			if ( isset( $aggregate['flame_raw'] ) ) {
 				$aggregate['flame'] = $aggregate['flame_raw'];
 				unset( $aggregate['flame_raw'] );
+			}
+			// Migrate legacy profile shape (EMA running means → sums).
+			// The old format had 'total_time' at the top level and per-category
+			// 'time'/'count' as running means; reset to start fresh on upgrade.
+			if ( isset( $aggregate['profiles'] ) && ! isset( $aggregate['profiles']['sum_req_time'] ) ) {
+				$aggregate['profiles'] = [
+					'count'        => 0,
+					'sum_req_time' => 0.0,
+					'categories'   => [],
+				];
 			}
 		}
 		$flame          = &$aggregate['flame'];
@@ -673,22 +686,14 @@ class FlameBuilder {
 
 		// --- 4. Profile data (per-URL + global leaderboard) - SINGLE LOOP ---
 		// Skip timed-out requests — their profiles are incomplete.
+		//
+		// Storage is RAW SUMS here, not running means. This avoids the EMA-clamp
+		// bug where samples/count saturated at EMA_SAMPLE_LIMIT lost the presence
+		// ratio. At display time, sums are converted to averages via the
+		// StatsStore::sums_to_display() helper.
 		if ( ! empty( $profiles ) && $has_timing ) {
-			// Initialize global leaderboard buffer.
-			if ( null === $context['global_leaderboard'] ) {
-				$context['global_leaderboard'] = [
-					'count'      => 0,
-					'total_time' => 0,
-					'categories' => [],
-				];
-			}
-
-			$prof          = &$aggregate['profiles'];
-			$lb            = &$context['global_leaderboard'];
-			$prof['count'] = \min( ( $prof['count'] ?? 0 ) + 1, self::EMA_SAMPLE_LIMIT );
-			$lb['count']   = \min( ( $lb['count'] ?? 0 ) + 1, self::EMA_SAMPLE_LIMIT );
-			$prof_count    = $prof['count'];
-			$lb_count      = $lb['count'];
+			$prof = &$aggregate['profiles'];
+			$lb   = &$context['pending']['leaderboard'];
 
 			// Calculate total profiled time inline.
 			$req_time = 0.0;
@@ -719,6 +724,19 @@ class FlameBuilder {
 			$cp['cat_by_url'][ $url_hash ]['total']['t'] += $duration_ms;
 			$cp['cat_by_url'][ $url_hash ]['total']['n']++;
 
+			// Per-server leaderboard pending bucket (hub mode only).
+			$slb = null;
+			if ( $context['is_hub'] && '' !== $server_name ) {
+				if ( ! isset( $cp['leaderboard_by_server'][ $server_name ] ) ) {
+					$cp['leaderboard_by_server'][ $server_name ] = [
+						'count'        => 0,
+						'sum_req_time' => 0.0,
+						'categories'   => [],
+					];
+				}
+				$slb = &$cp['leaderboard_by_server'][ $server_name ];
+			}
+
 			// Single loop over all profile categories.
 			// Intern category names — same hooks repeat across thousands of requests.
 			foreach ( $profiles as $category => $data ) {
@@ -743,82 +761,70 @@ class FlameBuilder {
 				$cat_count = (int) ( $data['count'] ?? 0 );
 				$cat_ts    = (int) ( $data['ts'] ?? 0 );
 
-				// --- Per-URL category ---
+				// --- Per-URL category (sums) ---
 				if ( ! isset( $prof['categories'][ $category ] ) ) {
 					$prof['categories'][ $category ] = [
-						'time'    => 0,
-						'count'   => 0,
-						'samples' => 0,
-						'ts'      => $cat_ts,
-						'entries' => [],
+						'samples'   => 0,
+						'sum_time'  => 0.0,
+						'sum_count' => 0.0,
+						'ts'        => $cat_ts,
+						'entries'   => [],
 					];
 				}
-				$pcat            = &$prof['categories'][ $category ];
-				$pcat['samples'] = \min( ( $pcat['samples'] ?? 0 ) + 1, self::EMA_SAMPLE_LIMIT );
-				$pcat['ts']      = \max( $pcat['ts'] ?? 0, $cat_ts );
-				$pcat['time']    = $pcat['time'] + ( $cat_time - $pcat['time'] ) / $pcat['samples'];
-				$pcat['count']   = $pcat['count'] + ( $cat_count - $pcat['count'] ) / $pcat['samples'];
+				$pcat              = &$prof['categories'][ $category ];
+				$pcat['samples']  += 1;
+				$pcat['sum_time']  += $cat_time;
+				$pcat['sum_count'] += $cat_count;
+				$pcat['ts']        = \max( $pcat['ts'] ?? 0, $cat_ts );
 
-				// --- Global leaderboard category ---
+				// --- Global leaderboard category (sums, pending bucket) ---
 				if ( ! isset( $lb['categories'][ $category ] ) ) {
 					$lb['categories'][ $category ] = [
-						'time'    => 0,
-						'count'   => 0,
-						'samples' => 0,
-						'entries' => [],
+						'samples'   => 0,
+						'sum_time'  => 0.0,
+						'sum_count' => 0.0,
+						'entries'   => [],
 					];
 				}
-				$lcat            = &$lb['categories'][ $category ];
-				$lcat['samples'] = \min( ( $lcat['samples'] ?? 0 ) + 1, self::EMA_SAMPLE_LIMIT );
-				$lcat['time']    = $lcat['time'] + ( $cat_time - $lcat['time'] ) / $lcat['samples'];
-				$lcat['count']   = $lcat['count'] + ( $cat_count - $lcat['count'] ) / $lcat['samples'];
+				$lcat              = &$lb['categories'][ $category ];
+				$lcat['samples']  += 1;
+				$lcat['sum_time']  += $cat_time;
+				$lcat['sum_count'] += $cat_count;
 
-				// --- Per-server leaderboard category (hub mode only) ---
-				if ( $context['is_hub'] && '' !== $server_name ) {
-					if ( ! isset( $context['leaderboard_by_server'][ $server_name ] ) ) {
-						$context['leaderboard_by_server'][ $server_name ] = [
-							'count'      => 0,
-							'total_time' => 0,
-							'categories' => [],
-						];
-					}
-					$slb = &$context['leaderboard_by_server'][ $server_name ];
-
+				// --- Per-server leaderboard category (sums, pending bucket) ---
+				if ( null !== $slb ) {
 					if ( ! isset( $slb['categories'][ $category ] ) ) {
 						$slb['categories'][ $category ] = [
-							'time'    => 0,
-							'count'   => 0,
-							'samples' => 0,
-							'entries' => [],
+							'samples'   => 0,
+							'sum_time'  => 0.0,
+							'sum_count' => 0.0,
+							'entries'   => [],
 						];
 					}
-					$scat            = &$slb['categories'][ $category ];
-					$scat['samples'] = \min( ( $scat['samples'] ?? 0 ) + 1, self::EMA_SAMPLE_LIMIT );
-					$scat['time']    = $scat['time'] + ( $cat_time - $scat['time'] ) / $scat['samples'];
-					$scat['count']   = $scat['count'] + ( $cat_count - $scat['count'] ) / $scat['samples'];
+					$scat              = &$slb['categories'][ $category ];
+					$scat['samples']  += 1;
+					$scat['sum_time']  += $cat_time;
+					$scat['sum_count'] += $cat_count;
 
-					// Per-server entries.
+					// Per-server entries (sums).
 					if ( ! empty( $data['entries'] ) ) {
 						foreach ( $data['entries'] as $s_name => $s_entry_data ) {
 							$s_name  = $intern[ $s_name ] ??= $s_name;
-							$s_time  = $s_entry_data[0] ?? 0;
-							$s_count = $s_entry_data[1] ?? 0;
+							$s_time  = (float) ( $s_entry_data[0] ?? 0 );
+							$s_count = (float) ( $s_entry_data[1] ?? 0 );
 							if ( ! isset( $scat['entries'][ $s_name ] ) ) {
-								$scat['entries'][ $s_name ] = [ $s_time, $s_count, 1 ];
-							} else {
-								$ses                            = ( $scat['entries'][ $s_name ][2] ?? 1 ) + 1;
-								$scat['entries'][ $s_name ][2]  = \min( $ses, self::EMA_SAMPLE_LIMIT );
-								$scat['entries'][ $s_name ][0] += ( $s_time - $scat['entries'][ $s_name ][0] ) / $scat['entries'][ $s_name ][2];
-								$scat['entries'][ $s_name ][1] += ( $s_count - $scat['entries'][ $s_name ][1] ) / $scat['entries'][ $s_name ][2];
+								$scat['entries'][ $s_name ] = [ 0.0, 0.0, 0 ];
 							}
+							$scat['entries'][ $s_name ][0] += $s_time;
+							$scat['entries'][ $s_name ][1] += $s_count;
+							$scat['entries'][ $s_name ][2] += 1;
 						}
 						if ( \count( $scat['entries'] ) > self::ENTRY_LIMIT_GLOBAL_UPPER ) {
-							\uasort( $scat['entries'], fn( $a, $b ) => $b[0] <=> $a[0] );
+							\uasort( $scat['entries'], fn( $a, $b ) => ( $b[0] ?? 0 ) <=> ( $a[0] ?? 0 ) );
 							$scat['entries'] = \array_slice( $scat['entries'], 0, self::ENTRY_LIMIT_GLOBAL_LOWER, true );
 						}
 					}
 					unset( $scat );
-					unset( $slb );
 				}
 
 				// --- Category time series (pending bucket) ---
@@ -850,9 +856,10 @@ class FlameBuilder {
 
 				// --- Significant event detection (average time per call exceeds threshold) ---
 				// Skip for callback categories — they're breakdowns, not independent events.
+				// Uses sums: avg time per call = sum_time / sum_count.
 				$time_threshold = $context['auto_protect_time_threshold'];
-				if ( ! $is_callback && ! $is_plugin && $time_threshold > 0 && $lcat['count'] > 0 ) {
-					$avg_per_call = $lcat['time'] / $lcat['count'];
+				if ( ! $is_callback && ! $is_plugin && $time_threshold > 0 && $lcat['sum_count'] > 0 ) {
+					$avg_per_call = $lcat['sum_time'] / $lcat['sum_count'];
 					if ( $avg_per_call >= $time_threshold ) {
 						$base_name = \explode( ' ', $category, 2 )[0];
 						if ( ! isset( $context['significant_events'][ $base_name ] ) ) {
@@ -862,41 +869,37 @@ class FlameBuilder {
 					}
 				}
 
-				// --- Entry loop (both per-URL and global, plus max tracking) ---
+				// --- Entry loop (both per-URL and global, sums) ---
 				if ( ! empty( $data['entries'] ) ) {
 					foreach ( $data['entries'] as $name => $entry_data ) {
 						$name        = $intern[ $name ] ??= $name;
-						$entry_time  = $entry_data[0] ?? 0;
-						$entry_count = $entry_data[1] ?? 0;
+						$entry_time  = (float) ( $entry_data[0] ?? 0 );
+						$entry_count = (float) ( $entry_data[1] ?? 0 );
 
-						// Per-URL entries (top 20).
+						// Per-URL entries.
 						if ( ! isset( $pcat['entries'][ $name ] ) ) {
-							$pcat['entries'][ $name ] = [ $entry_time, $entry_count, 1 ];
-						} else {
-							$es                           = ( $pcat['entries'][ $name ][2] ?? 1 ) + 1;
-							$pcat['entries'][ $name ][2]  = \min( $es, self::EMA_SAMPLE_LIMIT );
-							$pcat['entries'][ $name ][0] += ( $entry_time - $pcat['entries'][ $name ][0] ) / $pcat['entries'][ $name ][2];
-							$pcat['entries'][ $name ][1] += ( $entry_count - $pcat['entries'][ $name ][1] ) / $pcat['entries'][ $name ][2];
+							$pcat['entries'][ $name ] = [ 0.0, 0.0, 0 ];
 						}
+						$pcat['entries'][ $name ][0] += $entry_time;
+						$pcat['entries'][ $name ][1] += $entry_count;
+						$pcat['entries'][ $name ][2] += 1;
 
-						// Global entries (top 50).
+						// Global entries.
 						if ( ! isset( $lcat['entries'][ $name ] ) ) {
-							$lcat['entries'][ $name ] = [ $entry_time, $entry_count, 1 ];
-						} else {
-							$es                           = ( $lcat['entries'][ $name ][2] ?? 1 ) + 1;
-							$lcat['entries'][ $name ][2]  = \min( $es, self::EMA_SAMPLE_LIMIT );
-							$lcat['entries'][ $name ][0] += ( $entry_time - $lcat['entries'][ $name ][0] ) / $lcat['entries'][ $name ][2];
-							$lcat['entries'][ $name ][1] += ( $entry_count - $lcat['entries'][ $name ][1] ) / $lcat['entries'][ $name ][2];
+							$lcat['entries'][ $name ] = [ 0.0, 0.0, 0 ];
 						}
+						$lcat['entries'][ $name ][0] += $entry_time;
+						$lcat['entries'][ $name ][1] += $entry_count;
+						$lcat['entries'][ $name ][2] += 1;
 					}
 
-					// Trim entries with hysteresis: only sort when upper limit hit, trim to lower.
+					// Trim entries with hysteresis: cap by sum_time (proxy for importance).
 					if ( \count( $pcat['entries'] ) > self::ENTRY_LIMIT_URL_UPPER ) {
-						\uasort( $pcat['entries'], fn( $a, $b ) => $b[0] <=> $a[0] );
+						\uasort( $pcat['entries'], fn( $a, $b ) => ( $b[0] ?? 0 ) <=> ( $a[0] ?? 0 ) );
 						$pcat['entries'] = \array_slice( $pcat['entries'], 0, self::ENTRY_LIMIT_URL_LOWER, true );
 					}
 					if ( \count( $lcat['entries'] ) > self::ENTRY_LIMIT_GLOBAL_UPPER ) {
-						\uasort( $lcat['entries'], fn( $a, $b ) => $b[0] <=> $a[0] );
+						\uasort( $lcat['entries'], fn( $a, $b ) => ( $b[0] ?? 0 ) <=> ( $a[0] ?? 0 ) );
 						$lcat['entries'] = \array_slice( $lcat['entries'], 0, self::ENTRY_LIMIT_GLOBAL_LOWER, true );
 					}
 				}
@@ -910,15 +913,19 @@ class FlameBuilder {
 						$context['hooks_to_disable'][ $base_name ] = true;
 					}
 				}
+				unset( $pcat );
+				unset( $lcat );
 			}
-			$prof['total_time'] = ( $prof['total_time'] ?? 0 ) + ( $req_time - ( $prof['total_time'] ?? 0 ) ) / $prof_count;
-			$lb['total_time']   = ( $lb['total_time'] ?? 0 ) + ( $req_time - ( $lb['total_time'] ?? 0 ) ) / $lb_count;
 
-			// Per-server total_time + count (hub mode only).
-			if ( $context['is_hub'] && '' !== $server_name && isset( $context['leaderboard_by_server'][ $server_name ] ) ) {
-				$slb = &$context['leaderboard_by_server'][ $server_name ];
-				$slb['count']      = \min( ( $slb['count'] ?? 0 ) + 1, self::EMA_SAMPLE_LIMIT );
-				$slb['total_time'] = $slb['total_time'] + ( $req_time - $slb['total_time'] ) / $slb['count'];
+			// Top-level sums.
+			$prof['count']        = ( $prof['count']        ?? 0 ) + 1;
+			$prof['sum_req_time'] = ( $prof['sum_req_time'] ?? 0 ) + $req_time;
+			$lb['count']          = ( $lb['count']          ?? 0 ) + 1;
+			$lb['sum_req_time']   = ( $lb['sum_req_time']   ?? 0 ) + $req_time;
+
+			if ( null !== $slb ) {
+				$slb['count']        = ( $slb['count']        ?? 0 ) + 1;
+				$slb['sum_req_time'] = ( $slb['sum_req_time'] ?? 0 ) + $req_time;
 				unset( $slb );
 			}
 
@@ -930,6 +937,8 @@ class FlameBuilder {
 				}
 			}
 			unset( $cp );
+			unset( $prof );
+			unset( $lb );
 		}
 
 		// Store updated aggregate in LRU cache.
@@ -944,7 +953,7 @@ class FlameBuilder {
 	 * @param array $context Context array (modified by reference).
 	 */
 	private static function persist_aggregate_stats( array &$context ): void {
-		if ( empty( $context['hourly_stats'] ) && null === $context['global_leaderboard'] && empty( $context['leaderboard_by_server'] ) && empty( $context['url_stats'] ) && empty( $context['dim_stats'] ) && empty( $context['dim_stats_by_server'] ) && empty( $context['url_dim_stats'] ) && empty( $context['cat_stats'] ) && empty( $context['cat_stats_by_server'] ) && empty( $context['url_cat_stats'] ) ) {
+		if ( empty( $context['hourly_stats'] ) && empty( $context['leaderboard_stats'] ) && empty( $context['leaderboard_by_server_stats'] ) && empty( $context['url_stats'] ) && empty( $context['dim_stats'] ) && empty( $context['dim_stats_by_server'] ) && empty( $context['url_dim_stats'] ) && empty( $context['cat_stats'] ) && empty( $context['cat_stats_by_server'] ) && empty( $context['url_cat_stats'] ) ) {
 			return;
 		}
 
@@ -980,126 +989,46 @@ class FlameBuilder {
 			StatsStore::set_hourly( $p, $existing_hourly );
 		}
 
-		// --- Leaderboard ---
-		if ( null !== $context['global_leaderboard'] ) {
-			$lb    = $context['global_leaderboard'];
-			$ex_lb = StatsStore::get_leaderboard( $p ) ?? [
-				'count'      => 0,
-				'total_time' => 0,
-				'categories' => [],
+		// --- Leaderboard (bucketed, sums-based) ---
+		// Each bucket is its own memcache key; merging means reading the
+		// existing bucket, summing our contribution into it, and writing back.
+		// Old buckets expire naturally via memcache TTL.
+		foreach ( $context['leaderboard_stats'] as $bucket_key => $bucket_sums ) {
+			$existing = StatsStore::get_leaderboard_bucket( $p, $bucket_key ) ?? [
+				'count'        => 0,
+				'sum_req_time' => 0.0,
+				'categories'   => [],
 			];
-
-			// Weighted average for total_time based on counts.
-			$old_count = $ex_lb['count'] ?? 0;
-			$new_count = $lb['count'] ?? 0;
-			$total     = $old_count + $new_count;
-			if ( $total > 0 ) {
-				$ex_lb['total_time'] = (
-					( $ex_lb['total_time'] ?? 0 ) * $old_count +
-					( $lb['total_time'] ?? 0 ) * $new_count
-				) / $total;
-			}
-			$ex_lb['count'] = $total;
-
-			foreach ( ( $lb['categories'] ?? [] ) as $category => $data ) {
-				if ( ! isset( $ex_lb['categories'][ $category ] ) ) {
-					$ex_lb['categories'][ $category ] = $data;
-				} else {
-					$ex_cat = &$ex_lb['categories'][ $category ];
-
-					// Weighted average based on samples.
-					$old_samples   = $ex_cat['samples'] ?? 0;
-					$new_samples   = $data['samples'] ?? 0;
-					$total_samples = $old_samples + $new_samples;
-					if ( $total_samples > 0 ) {
-						$ex_cat['time']  = (
-							( $ex_cat['time'] ?? 0 ) * $old_samples +
-							( $data['time'] ?? 0 ) * $new_samples
-						) / $total_samples;
-						$ex_cat['count'] = (
-							( $ex_cat['count'] ?? 0 ) * $old_samples +
-							( $data['count'] ?? 0 ) * $new_samples
-						) / $total_samples;
-					}
-					$ex_cat['samples'] = $total_samples;
-
-					// Merge entries with hysteresis: only sort when upper limit hit.
-					foreach ( ( $data['entries'] ?? [] ) as $name => $entry ) {
-						if ( ! isset( $ex_cat['entries'][ $name ] ) ) {
-							$ex_cat['entries'][ $name ] = $entry;
-						} else {
-							$ex_cat['entries'][ $name ][0] = \max( $ex_cat['entries'][ $name ][0], $entry[0] );
-							$ex_cat['entries'][ $name ][1] = \max( $ex_cat['entries'][ $name ][1], $entry[1] );
-						}
-					}
-					if ( \count( $ex_cat['entries'] ) > self::ENTRY_LIMIT_GLOBAL_UPPER ) {
-						\uasort( $ex_cat['entries'], fn( $a, $b ) => $b[0] <=> $a[0] );
-						$ex_cat['entries'] = \array_slice( $ex_cat['entries'], 0, self::ENTRY_LIMIT_GLOBAL_LOWER, true );
-					}
+			StatsStore::merge_leaderboard_bucket( $existing, $bucket_sums );
+			// Cap entries per category after merge to stay under memcache 1MB limit.
+			foreach ( $existing['categories'] as &$cat_data ) {
+				if ( isset( $cat_data['entries'] ) && \count( $cat_data['entries'] ) > self::ENTRY_LIMIT_GLOBAL_UPPER ) {
+					\uasort( $cat_data['entries'], fn( $a, $b ) => ( $b[0] ?? 0 ) <=> ( $a[0] ?? 0 ) );
+					$cat_data['entries'] = \array_slice( $cat_data['entries'], 0, self::ENTRY_LIMIT_GLOBAL_LOWER, true );
 				}
 			}
-
-			StatsStore::set_leaderboard( $p, $ex_lb );
+			unset( $cat_data );
+			StatsStore::set_leaderboard_bucket( $p, $bucket_key, $existing );
 		}
 
-		// --- Per-server leaderboards (hub mode) ---
-		foreach ( ( $context['leaderboard_by_server'] ?? [] ) as $server => $lb ) {
-			$ex_lb = StatsStore::get_server_leaderboard( $p, $server ) ?? [
-				'count'      => 0,
-				'total_time' => 0,
-				'categories' => [],
-			];
-
-			// Weighted average for total_time based on counts.
-			$old_count = $ex_lb['count'] ?? 0;
-			$new_count = $lb['count'] ?? 0;
-			$total     = $old_count + $new_count;
-			if ( $total > 0 ) {
-				$ex_lb['total_time'] = (
-					( $ex_lb['total_time'] ?? 0 ) * $old_count +
-					( $lb['total_time'] ?? 0 ) * $new_count
-				) / $total;
-			}
-			$ex_lb['count'] = $total;
-
-			foreach ( ( $lb['categories'] ?? [] ) as $category => $data ) {
-				if ( ! isset( $ex_lb['categories'][ $category ] ) ) {
-					$ex_lb['categories'][ $category ] = $data;
-				} else {
-					$ex_cat = &$ex_lb['categories'][ $category ];
-
-					$old_samples   = $ex_cat['samples'] ?? 0;
-					$new_samples   = $data['samples'] ?? 0;
-					$total_samples = $old_samples + $new_samples;
-					if ( $total_samples > 0 ) {
-						$ex_cat['time']  = (
-							( $ex_cat['time'] ?? 0 ) * $old_samples +
-							( $data['time'] ?? 0 ) * $new_samples
-						) / $total_samples;
-						$ex_cat['count'] = (
-							( $ex_cat['count'] ?? 0 ) * $old_samples +
-							( $data['count'] ?? 0 ) * $new_samples
-						) / $total_samples;
+		// --- Per-server leaderboards (bucketed, sums-based) ---
+		foreach ( $context['leaderboard_by_server_stats'] as $server => $buckets ) {
+			foreach ( $buckets as $bucket_key => $bucket_sums ) {
+				$existing = StatsStore::get_server_leaderboard_bucket( $p, $server, $bucket_key ) ?? [
+					'count'        => 0,
+					'sum_req_time' => 0.0,
+					'categories'   => [],
+				];
+				StatsStore::merge_leaderboard_bucket( $existing, $bucket_sums );
+				foreach ( $existing['categories'] as &$cat_data ) {
+					if ( isset( $cat_data['entries'] ) && \count( $cat_data['entries'] ) > self::ENTRY_LIMIT_GLOBAL_UPPER ) {
+						\uasort( $cat_data['entries'], fn( $a, $b ) => ( $b[0] ?? 0 ) <=> ( $a[0] ?? 0 ) );
+						$cat_data['entries'] = \array_slice( $cat_data['entries'], 0, self::ENTRY_LIMIT_GLOBAL_LOWER, true );
 					}
-					$ex_cat['samples'] = $total_samples;
-
-					foreach ( ( $data['entries'] ?? [] ) as $name => $entry ) {
-						if ( ! isset( $ex_cat['entries'][ $name ] ) ) {
-							$ex_cat['entries'][ $name ] = $entry;
-						} else {
-							$ex_cat['entries'][ $name ][0] = \max( $ex_cat['entries'][ $name ][0], $entry[0] );
-							$ex_cat['entries'][ $name ][1] = \max( $ex_cat['entries'][ $name ][1], $entry[1] );
-						}
-					}
-					if ( \count( $ex_cat['entries'] ) > self::ENTRY_LIMIT_GLOBAL_UPPER ) {
-						\uasort( $ex_cat['entries'], fn( $a, $b ) => $b[0] <=> $a[0] );
-						$ex_cat['entries'] = \array_slice( $ex_cat['entries'], 0, self::ENTRY_LIMIT_GLOBAL_LOWER, true );
-					}
-					unset( $ex_cat );
 				}
+				unset( $cat_data );
+				StatsStore::set_server_leaderboard_bucket( $p, $server, $bucket_key, $existing );
 			}
-
-			StatsStore::set_server_leaderboard( $p, $server, $ex_lb );
 		}
 
 		// --- URL index (hourly buckets) ---
@@ -1387,16 +1316,47 @@ class FlameBuilder {
 			$context['url_cat_stats'][ $url_hash ][ $bk ] = self::cap_single_bucket( $cats, $max_cats );
 		}
 
+		// --- Leaderboard (global, sums-based) ---
+		if ( ( $p['leaderboard']['count'] ?? 0 ) > 0 ) {
+			// Additive merge into existing bucket-stats[ $bk ] so promoting
+			// multiple times per flush (every ~5s) accumulates correctly.
+			if ( ! isset( $context['leaderboard_stats'][ $bk ] ) ) {
+				$context['leaderboard_stats'][ $bk ] = [
+					'count'        => 0,
+					'sum_req_time' => 0.0,
+					'categories'   => [],
+				];
+			}
+			StatsStore::merge_leaderboard_bucket( $context['leaderboard_stats'][ $bk ], $p['leaderboard'] );
+		}
+
+		// --- Leaderboard (per-server, sums-based) ---
+		foreach ( $p['leaderboard_by_server'] as $server => $slb_data ) {
+			if ( ( $slb_data['count'] ?? 0 ) <= 0 ) {
+				continue;
+			}
+			if ( ! isset( $context['leaderboard_by_server_stats'][ $server ][ $bk ] ) ) {
+				$context['leaderboard_by_server_stats'][ $server ][ $bk ] = [
+					'count'        => 0,
+					'sum_req_time' => 0.0,
+					'categories'   => [],
+				];
+			}
+			StatsStore::merge_leaderboard_bucket( $context['leaderboard_by_server_stats'][ $server ][ $bk ], $slb_data );
+		}
+
 		// Reset pending for the new bucket.
 		$context['pending'] = [
-			'hourly'        => [],
-			'dim'           => [],
-			'dim_by_server' => [],
-			'url_dim'       => [],
-			'url_stats'     => [],
-			'cat'           => [],
-			'cat_by_server' => [],
-			'cat_by_url'    => [],
+			'hourly'                => [],
+			'dim'                   => [],
+			'dim_by_server'         => [],
+			'url_dim'               => [],
+			'url_stats'             => [],
+			'cat'                   => [],
+			'cat_by_server'         => [],
+			'cat_by_url'            => [],
+			'leaderboard'           => [ 'count' => 0, 'sum_req_time' => 0.0, 'categories' => [] ],
+			'leaderboard_by_server' => [],
 		];
 	}
 

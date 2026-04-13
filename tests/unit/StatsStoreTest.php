@@ -380,27 +380,28 @@ class StatsStoreTest extends TestCase {
 		$this->assertEqualsWithDelta( 800.0, $merged['2024-01-15-10-05']['sum_ms'], 0.01 );
 	}
 
-	// ── Memcached-dependent: leaderboard ────────────────────────────────
+	// ── Memcached-dependent: leaderboard (bucketed, sums) ───────────────
 
-	public function test_set_get_leaderboard_roundtrip(): void {
+	public function test_set_get_leaderboard_bucket_roundtrip(): void {
 		$this->require_memcached();
 		$this->rotate_and_reinit();
 
-		$data = [
-			'count'      => 10,
-			'total_time' => 500.0,
-			'categories' => [
+		$bucket = $this->current_bucket_key();
+		$data   = [
+			'count'        => 10,
+			'sum_req_time' => 500.0,
+			'categories'   => [
 				'wp_head' => [
-					'time'    => 50.0,
-					'count'   => 3.0,
-					'samples' => 10,
-					'entries' => [],
+					'samples'   => 10,
+					'sum_time'  => 500.0, // 50 avg * 10 requests
+					'sum_count' => 30.0,  // 3 avg * 10 requests
+					'entries'   => [],
 				],
 			],
 		];
 
-		$this->assertTrue( StatsStore::set_leaderboard( 0, $data ) );
-		$result = StatsStore::get_leaderboard( 0 );
+		$this->assertTrue( StatsStore::set_leaderboard_bucket( 0, $bucket, $data ) );
+		$result = StatsStore::get_leaderboard_bucket( 0, $bucket );
 		$this->assertSame( $data, $result );
 	}
 
@@ -408,23 +409,42 @@ class StatsStoreTest extends TestCase {
 		$this->require_memcached();
 		$this->rotate_and_reinit();
 
-		$data = [
-			'count'      => 10,
-			'total_time' => 500.0,
-			'categories' => [
+		$bucket = $this->current_bucket_key();
+		$data   = [
+			'count'        => 10,
+			'sum_req_time' => 500.0,
+			'categories'   => [
 				'wp_head' => [
-					'time'    => 50.0,
-					'count'   => 3.0,
-					'samples' => 10,
-					'entries' => [],
+					'samples'   => 10,
+					'sum_time'  => 500.0,
+					'sum_count' => 30.0,
+					'entries'   => [],
 				],
 			],
 		];
-		StatsStore::set_leaderboard( 0, $data );
+		StatsStore::set_leaderboard_bucket( 0, $bucket, $data );
 
 		$merged = StatsStore::get_merged_leaderboard();
 		$this->assertNotNull( $merged );
 		$this->assertSame( 10, $merged['count'] );
+		// Display shape: total_time = sum_req_time / count = 500 / 10 = 50.
+		$this->assertEqualsWithDelta( 50.0, $merged['total_time'], 0.01 );
+		$this->assertArrayHasKey( 'wp_head', $merged['categories'] );
+		// time = sum_time / count = 500 / 10 = 50.
+		$this->assertEqualsWithDelta( 50.0, $merged['categories']['wp_head']['time'], 0.01 );
+		// count = sum_count / count = 30 / 10 = 3.
+		$this->assertEqualsWithDelta( 3.0, $merged['categories']['wp_head']['count'], 0.01 );
+		$this->assertSame( 10, $merged['categories']['wp_head']['samples'] );
+	}
+
+	/**
+	 * Generate the bucket key for the current 5-minute window (Y-m-d-H-NN UTC).
+	 */
+	private function current_bucket_key(): string {
+		$now     = \time();
+		$min     = (int) \gmdate( 'i', $now );
+		$rounded = \str_pad( (string) ( (int) \floor( $min / 5 ) * 5 ), 2, '0', STR_PAD_LEFT );
+		return \gmdate( 'Y-m-d-H', $now ) . '-' . $rounded;
 	}
 
 	// ── Memcached-dependent: URL stats ──────────────────────────────────
@@ -552,20 +572,21 @@ class StatsStoreTest extends TestCase {
 		$this->assertSame( 10, $result['2024-01-15-10-05']['GET']['c'] );
 	}
 
-	// ── Memcached-dependent: server leaderboard ─────────────────────────
+	// ── Memcached-dependent: server leaderboard (bucketed, sums) ────────
 
-	public function test_set_get_server_leaderboard(): void {
+	public function test_set_get_server_leaderboard_bucket(): void {
 		$this->require_memcached();
 		$this->rotate_and_reinit();
 
-		$data = [
-			'count'      => 5,
-			'total_time' => 250.0,
-			'categories' => [],
+		$bucket = $this->current_bucket_key();
+		$data   = [
+			'count'        => 5,
+			'sum_req_time' => 250.0,
+			'categories'   => [],
 		];
 
-		$this->assertTrue( StatsStore::set_server_leaderboard( 0, 'web1', $data ) );
-		$result = StatsStore::get_server_leaderboard( 0, 'web1' );
+		$this->assertTrue( StatsStore::set_server_leaderboard_bucket( 0, 'web1', $bucket, $data ) );
+		$result = StatsStore::get_server_leaderboard_bucket( 0, 'web1', $bucket );
 		$this->assertSame( $data, $result );
 	}
 
@@ -746,27 +767,30 @@ class StatsStoreTest extends TestCase {
 		$this->require_memcached();
 		$this->rotate_and_reinit();
 
-		$data = [
-			'count'      => 10,
-			'total_time' => 500.0,
-			'categories' => [
+		$bucket = $this->current_bucket_key();
+		$data   = [
+			'count'        => 10,
+			'sum_req_time' => 500.0,
+			'categories'   => [
 				'wp_head' => [
-					'time'    => 50.0,
-					'count'   => 3.0,
-					'samples' => 10,
-					'entries' => [
-						'do_action' => [ 5.0, 3, 5 ],
+					'samples'   => 10,
+					'sum_time'  => 500.0, // 50 avg
+					'sum_count' => 30.0,  // 3 avg
+					'entries'   => [
+						'do_action' => [ 25.0, 15.0, 5 ], // sum_time, sum_count, samples
 					],
 				],
 			],
 		];
-		StatsStore::set_server_leaderboard( 0, 'web1', $data );
+		StatsStore::set_server_leaderboard_bucket( 0, 'web1', $bucket, $data );
 
 		$result = StatsStore::get_merged_server_leaderboard( 'web1' );
 		$this->assertNotNull( $result );
 		$this->assertSame( 10, $result['count'] );
 		$this->assertArrayHasKey( 'wp_head', $result['categories'] );
 		$this->assertArrayHasKey( 'do_action', $result['categories']['wp_head']['entries'] );
+		// Entry display: sum/samples = 25/5 = 5.
+		$this->assertEqualsWithDelta( 5.0, $result['categories']['wp_head']['entries']['do_action'][0], 0.01 );
 	}
 
 	public function test_get_merged_server_leaderboard_multiple_partitions(): void {
@@ -778,33 +802,34 @@ class StatsStoreTest extends TestCase {
 		$ref->setAccessible( true );
 		$ref->setValue( null, 2 );
 
+		$bucket = $this->current_bucket_key();
 		$data_p0 = [
-			'count'      => 5,
-			'total_time' => 250.0,
-			'categories' => [
+			'count'        => 5,
+			'sum_req_time' => 250.0,
+			'categories'   => [
 				'wp_head' => [
-					'time'    => 40.0,
-					'count'   => 2.0,
-					'samples' => 5,
-					'entries' => [],
+					'samples'   => 5,
+					'sum_time'  => 200.0, // 40 avg * 5 requests
+					'sum_count' => 10.0,  // 2 avg * 5 requests
+					'entries'   => [],
 				],
 			],
 		];
 		$data_p1 = [
-			'count'      => 8,
-			'total_time' => 400.0,
-			'categories' => [
+			'count'        => 8,
+			'sum_req_time' => 400.0,
+			'categories'   => [
 				'wp_head' => [
-					'time'    => 60.0,
-					'count'   => 4.0,
-					'samples' => 8,
-					'entries' => [],
+					'samples'   => 8,
+					'sum_time'  => 480.0, // 60 avg * 8 requests
+					'sum_count' => 32.0,  // 4 avg * 8 requests
+					'entries'   => [],
 				],
 			],
 		];
 
-		StatsStore::set_server_leaderboard( 0, 'web2', $data_p0 );
-		StatsStore::set_server_leaderboard( 1, 'web2', $data_p1 );
+		StatsStore::set_server_leaderboard_bucket( 0, 'web2', $bucket, $data_p0 );
+		StatsStore::set_server_leaderboard_bucket( 1, 'web2', $bucket, $data_p1 );
 
 		$result = StatsStore::get_merged_server_leaderboard( 'web2' );
 		$this->assertNotNull( $result );
@@ -812,7 +837,7 @@ class StatsStoreTest extends TestCase {
 		$this->assertSame( 13, $result['count'] );
 		// Samples merged: 5 + 8 = 13.
 		$this->assertSame( 13, $result['categories']['wp_head']['samples'] );
-		// Time is weighted average: (40*5 + 60*8) / 13 ~ 52.31.
+		// time = sum_time / count = (200 + 480) / 13 = 680/13 ~ 52.31.
 		$this->assertEqualsWithDelta( 52.31, $result['categories']['wp_head']['time'], 0.1 );
 	}
 
@@ -826,59 +851,65 @@ class StatsStoreTest extends TestCase {
 		$ref->setAccessible( true );
 		$ref->setValue( null, 2 );
 
+		$bucket  = $this->current_bucket_key();
 		$data_p0 = [
-			'count'      => 10,
-			'total_time' => 500.0,
-			'categories' => [
+			'count'        => 10,
+			'sum_req_time' => 500.0,
+			'categories'   => [
 				'wp_head' => [
-					'time'    => 50.0,
-					'count'   => 3.0,
-					'samples' => 10,
-					'entries' => [
-						'do_action' => [ 5.0, 2, 10 ],
+					'samples'   => 10,
+					'sum_time'  => 500.0, // 50 avg * 10
+					'sum_count' => 30.0,  // 3 avg * 10
+					'entries'   => [
+						// [sum_time, sum_count, samples] — 5 avg time, 2 avg count, 10 samples.
+						'do_action' => [ 50.0, 20.0, 10 ],
 					],
 				],
 			],
 		];
 		$data_p1 = [
-			'count'      => 15,
-			'total_time' => 750.0,
-			'categories' => [
+			'count'        => 15,
+			'sum_req_time' => 750.0,
+			'categories'   => [
 				'wp_head' => [
-					'time'    => 70.0,
-					'count'   => 5.0,
-					'samples' => 15,
-					'entries' => [
-						'do_action'    => [ 8.0, 3, 15 ],
-						'wp_enqueue'   => [ 10.0, 1, 15 ],
+					'samples'   => 15,
+					'sum_time'  => 1050.0, // 70 avg * 15
+					'sum_count' => 75.0,   // 5 avg * 15
+					'entries'   => [
+						// 8 avg time * 15 samples = 120, 3 avg count * 15 = 45.
+						'do_action'  => [ 120.0, 45.0, 15 ],
+						// 10 avg time * 15 samples = 150, 1 avg count * 15 = 15.
+						'wp_enqueue' => [ 150.0, 15.0, 15 ],
 					],
 				],
 				'the_content' => [
-					'time'    => 30.0,
-					'count'   => 1.0,
-					'samples' => 15,
-					'entries' => [],
+					'samples'   => 15,
+					'sum_time'  => 450.0, // 30 avg * 15
+					'sum_count' => 15.0,  // 1 avg * 15
+					'entries'   => [],
 				],
 			],
 		];
 
-		StatsStore::set_leaderboard( 0, $data_p0 );
-		StatsStore::set_leaderboard( 1, $data_p1 );
+		StatsStore::set_leaderboard_bucket( 0, $bucket, $data_p0 );
+		StatsStore::set_leaderboard_bucket( 1, $bucket, $data_p1 );
 
 		$result = StatsStore::get_merged_leaderboard();
 		$this->assertNotNull( $result );
 		// Count sums: 10 + 15 = 25.
 		$this->assertSame( 25, $result['count'] );
-		// wp_head should be merged across partitions.
+		// wp_head merged samples = 10 + 15 = 25.
 		$this->assertArrayHasKey( 'wp_head', $result['categories'] );
 		$this->assertSame( 25, $result['categories']['wp_head']['samples'] );
+		// time = (sum_time_p0 + sum_time_p1) / count = (500 + 1050) / 25 = 62.
+		$this->assertEqualsWithDelta( 62.0, $result['categories']['wp_head']['time'], 0.01 );
 		// the_content from p1 only.
 		$this->assertArrayHasKey( 'the_content', $result['categories'] );
 		$this->assertSame( 15, $result['categories']['the_content']['samples'] );
 		// Entries should be merged.
 		$this->assertArrayHasKey( 'do_action', $result['categories']['wp_head']['entries'] );
 		$this->assertArrayHasKey( 'wp_enqueue', $result['categories']['wp_head']['entries'] );
-		// Verify weighted merge for do_action: (5*10 + 8*15) / (10+15) = 170/25 = 6.8.
+		// do_action display: (sum_time_p0 + sum_time_p1) / total_samples = (50 + 120) / (10 + 15) = 170/25 = 6.8.
 		$this->assertEqualsWithDelta( 6.8, $result['categories']['wp_head']['entries']['do_action'][0], 0.01 );
 	}
 
@@ -1135,44 +1166,47 @@ class StatsStoreTest extends TestCase {
 		$ref->setAccessible( true );
 		$ref->setValue( null, 2 );
 
+		$bucket  = $this->current_bucket_key();
 		$data_p0 = [
-			'count'      => 5,
-			'total_time' => 250.0,
-			'categories' => [
+			'count'        => 5,
+			'sum_req_time' => 250.0,
+			'categories'   => [
 				'wp_head' => [
-					'time'    => 40.0,
-					'count'   => 2.0,
-					'samples' => 5,
-					'entries' => [
-						'do_action' => [ 5.0, 2, 5 ],
+					'samples'   => 5,
+					'sum_time'  => 200.0, // 40 avg * 5
+					'sum_count' => 10.0,  // 2 avg * 5
+					'entries'   => [
+						// 5 avg time * 5 samples = 25, 2 avg count * 5 = 10.
+						'do_action' => [ 25.0, 10.0, 5 ],
 					],
 				],
 			],
 		];
 		$data_p1 = [
-			'count'      => 8,
-			'total_time' => 400.0,
-			'categories' => [
+			'count'        => 8,
+			'sum_req_time' => 400.0,
+			'categories'   => [
 				'wp_head' => [
-					'time'    => 60.0,
-					'count'   => 4.0,
-					'samples' => 8,
-					'entries' => [
-						'do_action'  => [ 8.0, 3, 8 ],
-						'wp_enqueue' => [ 10.0, 1, 8 ],
+					'samples'   => 8,
+					'sum_time'  => 480.0, // 60 avg * 8
+					'sum_count' => 32.0,  // 4 avg * 8
+					'entries'   => [
+						// 8 avg * 8 samples = 64, 3 avg * 8 = 24.
+						'do_action'  => [ 64.0, 24.0, 8 ],
+						'wp_enqueue' => [ 80.0, 8.0, 8 ],
 					],
 				],
 				'the_content' => [
-					'time'    => 30.0,
-					'count'   => 1.0,
-					'samples' => 8,
-					'entries' => [],
+					'samples'   => 8,
+					'sum_time'  => 240.0, // 30 avg * 8
+					'sum_count' => 8.0,   // 1 avg * 8
+					'entries'   => [],
 				],
 			],
 		];
 
-		StatsStore::set_server_leaderboard( 0, 'web3', $data_p0 );
-		StatsStore::set_server_leaderboard( 1, 'web3', $data_p1 );
+		StatsStore::set_server_leaderboard_bucket( 0, 'web3', $bucket, $data_p0 );
+		StatsStore::set_server_leaderboard_bucket( 1, 'web3', $bucket, $data_p1 );
 
 		$result = StatsStore::get_merged_server_leaderboard( 'web3' );
 		$this->assertNotNull( $result );
@@ -1182,7 +1216,7 @@ class StatsStoreTest extends TestCase {
 		// the_content from p1 only (new category path).
 		$this->assertArrayHasKey( 'the_content', $result['categories'] );
 		$this->assertSame( 8, $result['categories']['the_content']['samples'] );
-		// Entry merging: do_action weighted average = (5*5 + 8*8) / (5+8) = 89/13 ~ 6.85.
+		// do_action display: (sum_time_p0 + sum_time_p1) / total_samples = (25 + 64) / 13 = 89/13 ~ 6.85.
 		$entries = $result['categories']['wp_head']['entries'];
 		$this->assertArrayHasKey( 'do_action', $entries );
 		$this->assertEqualsWithDelta( 6.85, $entries['do_action'][0], 0.1 );

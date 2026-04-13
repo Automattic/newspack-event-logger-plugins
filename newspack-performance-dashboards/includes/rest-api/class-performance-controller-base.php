@@ -261,25 +261,41 @@ abstract class PerformanceControllerBase extends \WP_REST_Controller {
 
 
 	/**
-	 * Scale category times by samples/count to get true average over ALL requests.
+	 * Convert sums-based profile data to the display shape expected by the frontend.
 	 *
-	 * Categories that appear in fewer requests get scaled down proportionally.
+	 * Input shape (what the worker stores):
+	 *   { count, sum_req_time, categories: { cat: { samples, sum_time, sum_count, entries } } }
 	 *
-	 * @param array $data Profile/leaderboard data with 'count' and 'categories' keys.
+	 * Output shape (what the frontend reads):
+	 *   { count, total_time, categories: { cat: { time, count, samples, entries } } }
+	 *
+	 * - 'time'  = sum_time  / count — avg exclusive cat time per request across ALL profiled requests.
+	 * - 'count' = sum_count / count — avg invocation count per request across ALL profiled requests.
+	 * - entries are converted to per-appearance averages (sum / samples).
+	 *
+	 * Passing display-shape data through is a no-op: if 'total_time' is already
+	 * present the input is assumed to be pre-converted and returned unchanged.
+	 *
+	 * @param array $data Profile data (modified in place).
 	 * @return void
 	 */
 	protected function scale_categories_by_samples( array &$data ): void {
 		if ( empty( $data ) || ( $data['count'] ?? 0 ) <= 0 ) {
 			return;
 		}
-		$total_count = $data['count'];
-		foreach ( ( $data['categories'] ?? [] ) as $cat => $cat_data ) {
-			$samples = $cat_data['samples'] ?? $total_count;
-			if ( $samples < $total_count ) {
-				$data['categories'][ $cat ]['time']  = ( $cat_data['time'] ?? 0 ) * $samples / $total_count;
-				$data['categories'][ $cat ]['count'] = ( $cat_data['count'] ?? 0 ) * $samples / $total_count;
-			}
+		// Already in display shape (leaderboard data from StatsStore is pre-converted).
+		if ( isset( $data['total_time'] ) && ! isset( $data['sum_req_time'] ) ) {
+			return;
 		}
+		$total_count  = (int) $data['count'];
+		$sum_req_time = (float) ( $data['sum_req_time'] ?? 0 );
+		$sums         = $data['categories'] ?? [];
+
+		$display = \Newspack_Performance_Workers\StatsStore::sums_to_display( $total_count, $sum_req_time, $sums );
+
+		$data['total_time'] = $display['total_time'];
+		$data['categories'] = $display['categories'];
+		unset( $data['sum_req_time'] );
 	}
 
 	/**
