@@ -204,6 +204,14 @@ class FlameBuilder {
 	public static function flush( array &$context ): void {
 		$partition = $context['partition'];
 
+		// Promote pending bucket into flush arrays on every flush cycle so
+		// dashboards see data within 30s, not after the 5-minute bucket rotation.
+		// The merge in persist_aggregate_stats is additive, so flushing partial
+		// 30s chunks produces the same result as one batch at rotation time.
+		if ( '' !== $context['pending_bucket'] ) {
+			self::promote_pending_bucket( $context );
+		}
+
 		// Flush per-URL stats accumulators (combined flame + profiles) to memcache.
 		$now = \time();
 		foreach ( $context['stats_cache']->iterate() as $url_hash => $aggregate ) {

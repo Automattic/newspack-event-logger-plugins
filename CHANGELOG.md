@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- FlameBuilder: promote the pending bucket into flush arrays on every 30s flush cycle instead of waiting for the 5-minute bucket rotation. Dashboards now see new category/leaderboard/url data within 30s. Safe because `persist_aggregate_stats` merges additively — partial 30s chunks produce the same result as one batch at rotation time.
+
+### Fixed
+
+- Performance Dashboard: RequestProfile per-row percentages no longer overflow 100% in the aggregator/URL views. Row percentages now share out the total profiled time (`profiledTime`) rather than the wall clock (`totalMs`), which had mismatched populations (EMA-sampled categories vs. global average wall clock). The Total Profiled row still shows profiled coverage as a fraction of wall clock.
+
 ## [2.4.18] - 2026-04-11
 
 ### Changed

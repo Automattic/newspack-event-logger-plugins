@@ -111,7 +111,8 @@ export default function RequestProfile( {
 					if ( isCallbackCategory( state ) ) {
 						return null;
 					}
-					const pct = totalMs > 0 ? ( time / totalMs ) * 100 : 0;
+					const pct =
+						profiledTime > 0 ? ( time / profiledTime ) * 100 : 0;
 					return (
 						<div
 							key={ state }
@@ -157,7 +158,9 @@ export default function RequestProfile( {
 					{ visibleProfiles.map(
 						( { state, count, time, entries } ) => {
 							const pct =
-								totalMs > 0 ? ( time / totalMs ) * 100 : 0;
+								profiledTime > 0
+									? ( time / profiledTime ) * 100
+									: 0;
 							const hasEntries =
 								Object.keys( entries ).length > 0;
 							const isExpanded = expandedState === state;
