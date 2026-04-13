@@ -515,14 +515,18 @@ class FlameBuilder {
 		$partition      = $context['partition'];
 
 		// --- 1. Flame data (per-URL aggregate) with LRU caching ---
+		// Sums-based: flame['count'] is unclamped, flame['sum_value'] is the
+		// sum of duration_ms across all requests for this URL, and each child
+		// node carries its own sum_value/seen_count. Display values come from
+		// finalize_flame_node at flush time (sum_value / total_count).
 		$aggregate = $context['stats_cache']->get( $url_hash );
 		if ( null === $aggregate ) {
 			$aggregate = StatsStore::get_url_stats( $partition, $url_hash ) ?? [
 				'flame'    => [
-					'name'     => 'aggregate',
-					'value'    => 0,
-					'count'    => 0,
-					'children' => [],
+					'name'      => 'aggregate',
+					'sum_value' => 0.0,
+					'count'     => 0,
+					'children'  => [],
 				],
 				'profiles' => [
 					'count'        => 0,
@@ -534,9 +538,19 @@ class FlameBuilder {
 				$aggregate['flame'] = $aggregate['flame_raw'];
 				unset( $aggregate['flame_raw'] );
 			}
+			// Migrate legacy flame shape (EMA running mean → sums). The old
+			// format had a clamped `count` and `value` was a running mean;
+			// reset to start fresh on upgrade. Per-URL flame TTL is short
+			// (~1h) so there's nothing valuable to preserve.
+			if ( isset( $aggregate['flame'] ) && ! isset( $aggregate['flame']['sum_value'] ) ) {
+				$aggregate['flame'] = [
+					'name'      => 'aggregate',
+					'sum_value' => 0.0,
+					'count'     => 0,
+					'children'  => [],
+				];
+			}
 			// Migrate legacy profile shape (EMA running means → sums).
-			// The old format had 'total_time' at the top level and per-category
-			// 'time'/'count' as running means; reset to start fresh on upgrade.
 			if ( isset( $aggregate['profiles'] ) && ! isset( $aggregate['profiles']['sum_req_time'] ) ) {
 				$aggregate['profiles'] = [
 					'count'        => 0,
@@ -545,11 +559,11 @@ class FlameBuilder {
 				];
 			}
 		}
-		$flame          = &$aggregate['flame'];
-		$flame['count'] = \min( ( $flame['count'] ?? 0 ) + 1, self::EMA_SAMPLE_LIMIT );
+		$flame = &$aggregate['flame'];
+		$flame['count'] = ( $flame['count'] ?? 0 ) + 1;
 		if ( $has_timing ) {
-			$flame['value']    = ( $flame['value'] ?? 0 ) + ( $duration_ms - ( $flame['value'] ?? 0 ) ) / $flame['count'];
-			$flame['children'] = self::merge_flame_children_incremental( $flame['children'] ?? [], $flame_data['children'] ?? [] );
+			$flame['sum_value'] = ( $flame['sum_value'] ?? 0 ) + (float) $duration_ms;
+			$flame['children']  = self::merge_flame_children_incremental( $flame['children'] ?? [], $flame_data['children'] ?? [] );
 		}
 
 		// --- 2. Bucket key and rotation ---
@@ -1391,7 +1405,17 @@ class FlameBuilder {
 	}
 
 	/**
-	 * Recursively merge flame children using incremental averaging.
+	 * Recursively merge flame children additively (sums-based).
+	 *
+	 * Each node carries `sum_value` (sum of inclusive durations across every
+	 * request the node was seen in) and `seen_count` (true count of those
+	 * requests). At finalize time, `sum_value` is divided by the root's
+	 * total request count to produce the displayed average — equivalent to
+	 * the previous "running mean × seen_count/total_count" math but without
+	 * the EMA-clamp distortion at the root.
+	 *
+	 * Incoming nodes from `build_flame_data` carry `value` (one request's
+	 * inclusive duration); we add it to the existing `sum_value` here.
 	 *
 	 * @param array $existing Existing children array.
 	 * @param array $incoming Incoming children to merge.
@@ -1409,24 +1433,21 @@ class FlameBuilder {
 		}
 
 		foreach ( $incoming as $child ) {
-			$name     = $child['name'] ?? 'unknown';
-			$child_ts = (int) ( $child['ts'] ?? \time() );
+			$name           = $child['name'] ?? 'unknown';
+			$child_ts       = (int) ( $child['ts'] ?? \time() );
+			$incoming_value = (float) ( $child['value'] ?? 0 );
 			if ( ! isset( $indexed[ $name ] ) ) {
-				// New node: store raw value (scaling by seen_count/count happens at display time).
 				$indexed[ $name ] = [
 					'name'       => $name,
-					'value'      => $child['value'] ?? 0,
+					'sum_value'  => $incoming_value,
 					'seen_count' => 1,
 					'ts'         => $child_ts,
 					'children'   => [],
 				];
 			} else {
 				++$indexed[ $name ]['seen_count'];
-				$indexed[ $name ]['ts'] = $child_ts;
-				$old_value              = $indexed[ $name ]['value'];
-				$new_value              = $child['value'] ?? 0;
-				// EMA over times this node was seen (scaling by seen_count/count happens at display time).
-				$indexed[ $name ]['value'] = $old_value + ( $new_value - $old_value ) / $indexed[ $name ]['seen_count'];
+				$indexed[ $name ]['ts']         = $child_ts;
+				$indexed[ $name ]['sum_value'] += $incoming_value;
 			}
 
 			if ( ! empty( $child['children'] ) ) {
@@ -1450,10 +1471,18 @@ class FlameBuilder {
 	}
 
 	/**
-	 * Finalize flame node for storage: scale values, strip suffixes, normalize.
+	 * Finalize a flame node for display: convert sums to averages, strip
+	 * suffixes, normalize parent ≥ children, and remove internal fields.
+	 *
+	 * The displayed `value` is the average inclusive duration per request
+	 * across the URL's full request count: `sum_value / total_count`. This
+	 * is mathematically equivalent to the previous "running-mean times
+	 * seen_count/total_count" formula but doesn't depend on `total_count`
+	 * being clamped — fixing the EMA-clamp distortion that made flame
+	 * percentages disagree with the bucketed leaderboard.
 	 *
 	 * @param array $node        Flame node (modified in place).
-	 * @param int   $total_count Total request count for scaling.
+	 * @param int   $total_count Total request count for the URL (root flame count).
 	 * @param int   $depth       Current recursion depth.
 	 */
 	private static function finalize_flame_node( array &$node, int $total_count, int $depth = 0 ): void {
@@ -1468,12 +1497,11 @@ class FlameBuilder {
 			$node['name'] = \substr( $name, 0, $null_pos );
 		}
 
-		// Scale value by seen_count/total_count for nodes not seen in every request.
-		if ( $total_count > 0 && isset( $node['seen_count'] ) ) {
-			$seen = (int) $node['seen_count'];
-			if ( $seen > 0 && $seen < $total_count ) {
-				$node['value'] = ( $node['value'] ?? 0 ) * $seen / $total_count;
-			}
+		// Convert sum to average across all requests for this URL.
+		if ( $total_count > 0 && isset( $node['sum_value'] ) ) {
+			$node['value'] = $node['sum_value'] / $total_count;
+		} elseif ( ! isset( $node['value'] ) ) {
+			$node['value'] = 0;
 		}
 
 		// Process children recursively (must happen before normalization).
@@ -1483,7 +1511,9 @@ class FlameBuilder {
 			}
 			unset( $child );
 
-			// Normalize: ensure parent value >= sum of children (scaling can violate this).
+			// Normalize: ensure parent value >= sum of children. Floating-point
+			// drift or measurement asymmetry can otherwise make a parent slightly
+			// smaller than its children, which the flame layout dislikes.
 			$children_sum = 0;
 			foreach ( $node['children'] as $child ) {
 				$children_sum += $child['value'] ?? 0;
@@ -1495,6 +1525,8 @@ class FlameBuilder {
 
 		// Remove internal tracking fields not needed by client.
 		unset( $node['ts'] );
+		unset( $node['sum_value'] );
+		unset( $node['seen_count'] );
 	}
 
 	/**

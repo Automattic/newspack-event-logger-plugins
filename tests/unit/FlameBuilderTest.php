@@ -427,29 +427,30 @@ class FlameBuilderTest extends TestCase {
 		$this->assertSame( 1, $stats['count_5xx'] );
 	}
 
-	// ── accumulate_all_stats — flame EMA merge ────────────────────────────
+	// ── accumulate_all_stats — flame sums accumulation ───────────────────
 
-	public function test_flame_ema_value_averages_over_requests(): void {
+	public function test_flame_sum_value_accumulates_over_requests(): void {
 		$context  = $this->make_context();
-		$url_hash = RequestBuilder::url_hash( '/ema-test' );
+		$url_hash = RequestBuilder::url_hash( '/sum-test' );
 
 		// First request: 100ms.
-		$request1 = $this->make_request( [ 'url' => '/ema-test', 'duration_ms' => 100.0 ] );
+		$request1 = $this->make_request( [ 'url' => '/sum-test', 'duration_ms' => 100.0 ] );
 		$flame1   = [ 'name' => 'request', 'value' => 100.0, 'children' => [] ];
 		$this->accumulate( $url_hash, $flame1, [], $request1, $context );
 
 		$agg1 = $context['stats_cache']->get( $url_hash );
 		$this->assertSame( 1, $agg1['flame']['count'] );
-		$this->assertEqualsWithDelta( 100.0, $agg1['flame']['value'], 0.01 );
+		$this->assertEqualsWithDelta( 100.0, $agg1['flame']['sum_value'], 0.01 );
 
-		// Second request: 200ms. EMA: 100 + (200 - 100) / 2 = 150.
-		$request2 = $this->make_request( [ 'url' => '/ema-test', 'duration_ms' => 200.0 ] );
+		// Second request: 200ms. Sums add: 100 + 200 = 300.
+		$request2 = $this->make_request( [ 'url' => '/sum-test', 'duration_ms' => 200.0 ] );
 		$flame2   = [ 'name' => 'request', 'value' => 200.0, 'children' => [] ];
 		$this->accumulate( $url_hash, $flame2, [], $request2, $context );
 
 		$agg2 = $context['stats_cache']->get( $url_hash );
 		$this->assertSame( 2, $agg2['flame']['count'] );
-		$this->assertEqualsWithDelta( 150.0, $agg2['flame']['value'], 0.01 );
+		$this->assertEqualsWithDelta( 300.0, $agg2['flame']['sum_value'], 0.01 );
+		// Display value (computed at finalize time) = sum_value / count = 150.
 	}
 
 	// ── accumulate_all_stats — profile accumulation ───────────────────────
@@ -644,11 +645,12 @@ class FlameBuilderTest extends TestCase {
 		$this->assertContains( 'b', $names );
 	}
 
-	public function test_merge_flame_children_existing_node_ema_updated(): void {
-		$now = \time();
+	public function test_merge_flame_children_existing_node_sums_added(): void {
+		$now      = \time();
 		$existing = [
-			[ 'name' => 'query', 'value' => 100, 'seen_count' => 1, 'ts' => $now, 'children' => [] ],
+			[ 'name' => 'query', 'sum_value' => 100, 'seen_count' => 1, 'ts' => $now, 'children' => [] ],
 		];
+		// Incoming nodes from build_flame_data carry per-request `value`.
 		$incoming = [
 			[ 'name' => 'query', 'value' => 200, 'ts' => $now, 'children' => [] ],
 		];
@@ -656,37 +658,39 @@ class FlameBuilderTest extends TestCase {
 
 		$this->assertCount( 1, $merged );
 		$this->assertSame( 2, $merged[0]['seen_count'] );
-		// EMA: 100 + (200 - 100) / 2 = 150.
-		$this->assertEqualsWithDelta( 150.0, $merged[0]['value'], 0.01 );
+		// Sums add: 100 + 200 = 300.
+		$this->assertEqualsWithDelta( 300.0, $merged[0]['sum_value'], 0.01 );
 	}
 
 	// ── finalize_flame_node ───────────────────────────────────────────────
 
-	public function test_finalize_scales_by_seen_count(): void {
+	public function test_finalize_converts_sum_to_average(): void {
 		$node = [
 			'name'       => 'query',
-			'value'      => 100,
+			'sum_value'  => 500.0, // 5 occurrences contributed 100ms each
 			'seen_count' => 5,
 			'ts'         => \time(),
 			'children'   => [],
 		];
+		// Total request count for the URL = 10. Display value = sum / total = 50.
 		self::call_private( 'finalize_flame_node', [ &$node, 10 ] );
-		// Seen 5 out of 10: value should be scaled to 50.
 		$this->assertEqualsWithDelta( 50.0, $node['value'], 0.01 );
-		// 'ts' should be removed.
+		// Internal tracking fields are stripped.
 		$this->assertArrayNotHasKey( 'ts', $node );
+		$this->assertArrayNotHasKey( 'sum_value', $node );
+		$this->assertArrayNotHasKey( 'seen_count', $node );
 	}
 
 	public function test_finalize_ensures_parent_ge_children_sum(): void {
 		$node = [
 			'name'       => 'parent',
-			'value'      => 10, // Will be 5 after scaling (5/10).
+			'sum_value'  => 50.0, // After finalize: 50 / 10 = 5.
 			'seen_count' => 5,
 			'ts'         => \time(),
 			'children'   => [
 				[
 					'name'       => 'child',
-					'value'      => 100,
+					'sum_value'  => 1000.0, // After finalize: 1000 / 10 = 100.
 					'seen_count' => 10,
 					'ts'         => \time(),
 					'children'   => [],
@@ -694,8 +698,9 @@ class FlameBuilderTest extends TestCase {
 			],
 		];
 		self::call_private( 'finalize_flame_node', [ &$node, 10 ] );
-		// Child seen 10/10: value stays 100.
-		// Parent seen 5/10: value scaled to 5, but children sum is 100, so parent bumped.
+		// Child finalized to 100. Parent's own sum yields 5, which is less than
+		// the child's 100, so the normalization step bumps parent to ≥ 100.
+		$this->assertEqualsWithDelta( 100.0, $node['children'][0]['value'], 0.01 );
 		$this->assertGreaterThanOrEqual( $node['children'][0]['value'], $node['value'] );
 	}
 
@@ -775,21 +780,24 @@ class FlameBuilderTest extends TestCase {
 		$this->assertNull( $context['flames_log'] );
 	}
 
-	// ── EMA_SAMPLE_LIMIT ─────────────────────────────────────────────────
+	// ── flame count is unclamped (sums-based) ────────────────────────────
 
-	public function test_flame_count_capped_at_ema_limit(): void {
+	public function test_flame_count_grows_unbounded(): void {
 		$context  = $this->make_context();
-		$url_hash = RequestBuilder::url_hash( '/cap-test' );
+		$url_hash = RequestBuilder::url_hash( '/unbounded-test' );
 
-		// Accumulate many requests - count should be capped at EMA_SAMPLE_LIMIT.
+		// Accumulate more requests than the old EMA_SAMPLE_LIMIT.
+		// The flame count should track the true total, not clamp to 1000.
 		for ( $i = 0; $i < 1005; $i++ ) {
-			$request = $this->make_request( [ 'url' => '/cap-test', 'duration_ms' => 100.0 ] );
+			$request = $this->make_request( [ 'url' => '/unbounded-test', 'duration_ms' => 100.0 ] );
 			$flame   = [ 'name' => 'request', 'value' => 100.0, 'children' => [] ];
 			$this->accumulate( $url_hash, $flame, [], $request, $context );
 		}
 
 		$agg = $context['stats_cache']->get( $url_hash );
-		$this->assertSame( FlameBuilder::EMA_SAMPLE_LIMIT, $agg['flame']['count'] );
+		$this->assertSame( 1005, $agg['flame']['count'] );
+		// sum_value = 1005 × 100 = 100500. Display value at finalize would be 100.
+		$this->assertEqualsWithDelta( 100500.0, $agg['flame']['sum_value'], 0.01 );
 	}
 
 	// ── accumulate_all_stats — min_ms tracking ───────────────────────────
