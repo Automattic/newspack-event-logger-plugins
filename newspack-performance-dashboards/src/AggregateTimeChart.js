@@ -5,7 +5,7 @@
  * Stacked bars for volume/cumulative metrics, line chart for avg response time.
  */
 
-import { useMemo } from '@wordpress/element';
+import { useCallback, useMemo } from '@wordpress/element';
 import * as d3 from 'd3';
 import { STATUS_COLORS } from './shared/utils/formatUtils';
 import {
@@ -141,7 +141,7 @@ export default function AggregateTimeChart( {
 		return { chartData, keys: dimValues, colorMap, isLine };
 	}, [ data, breakdownData, metric, breakdown ] );
 
-	const { containerRef, tooltipRef } = useTimeChart(
+	const renderFn = useCallback(
 		( refs ) => {
 			if (
 				! refs.containerRef.current ||
@@ -394,6 +394,8 @@ export default function AggregateTimeChart( {
 		},
 		[ chartState, metric ]
 	);
+
+	const { containerRef, tooltipRef } = useTimeChart( renderFn );
 
 	if ( ! data || Object.keys( data ).length === 0 ) {
 		return null;

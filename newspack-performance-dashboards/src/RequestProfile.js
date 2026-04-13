@@ -111,8 +111,10 @@ export default function RequestProfile( {
 					if ( isCallbackCategory( state ) ) {
 						return null;
 					}
-					const pct =
-						profiledTime > 0 ? ( time / profiledTime ) * 100 : 0;
+					// Use wall clock as the denominator so the bar visually
+					// shows the unprofiled gap as empty background. Chunks
+					// sum to (profiledTime / totalMs) * 100% of bar width.
+					const pct = totalMs > 0 ? ( time / totalMs ) * 100 : 0;
 					return (
 						<div
 							key={ state }
@@ -157,10 +159,10 @@ export default function RequestProfile( {
 				<tbody>
 					{ visibleProfiles.map(
 						( { state, count, time, entries } ) => {
+							// Use wall clock so row percentages match the
+							// summary bar widths and sum to ≤ Total Profiled.
 							const pct =
-								profiledTime > 0
-									? ( time / profiledTime ) * 100
-									: 0;
+								totalMs > 0 ? ( time / totalMs ) * 100 : 0;
 							const hasEntries =
 								Object.keys( entries ).length > 0;
 							const isExpanded = expandedState === state;

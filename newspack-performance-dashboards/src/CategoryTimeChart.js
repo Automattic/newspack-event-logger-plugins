@@ -5,7 +5,7 @@
  * Three modes: "time" (seconds per second), "count" (events per second), "average" (ms per event).
  */
 
-import { useMemo } from '@wordpress/element';
+import { useCallback, useMemo } from '@wordpress/element';
 import * as d3 from 'd3';
 import {
 	BUCKET_SECONDS,
@@ -92,7 +92,7 @@ export default function CategoryTimeChart( { data, mode, title } ) {
 		return { series, slots };
 	}, [ data, mode ] );
 
-	const { containerRef, tooltipRef } = useTimeChart(
+	const renderFn = useCallback(
 		( refs ) => {
 			if (
 				! refs.containerRef.current ||
@@ -215,6 +215,8 @@ export default function CategoryTimeChart( { data, mode, title } ) {
 		},
 		[ chartState, mode ]
 	);
+
+	const { containerRef, tooltipRef } = useTimeChart( renderFn );
 
 	if ( ! data || Object.keys( data ).length === 0 ) {
 		return null;

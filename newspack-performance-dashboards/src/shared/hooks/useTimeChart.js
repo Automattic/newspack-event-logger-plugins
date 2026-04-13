@@ -252,19 +252,21 @@ export const setupTooltip = (
 /**
  * Hook providing the common render/resize/scroll lifecycle for time-series charts.
  *
- * @param {Function} renderFn The chart-specific render function. Receives { containerRef, tooltipRef, lastMouseXRef }.
- * @param {Array}    deps     Dependencies for the render callback (e.g. [chartState, metric]).
+ * Callers must memoize `renderFn` themselves (via `useCallback` with their own
+ * deps) so the render lifecycle only fires when the underlying data changes.
+ * Passing a fresh function every render would cause infinite re-renders.
+ *
+ * @param {Function} renderFn Memoized chart render function. Receives { containerRef, tooltipRef, lastMouseXRef }.
  * @return {Object} { containerRef, tooltipRef, lastMouseXRef } refs to pass to JSX.
  */
-export function useTimeChart( renderFn, deps ) {
+export function useTimeChart( renderFn ) {
 	const containerRef = useRef( null );
 	const tooltipRef = useRef( null );
 	const lastMouseXRef = useRef( null );
 
-	// eslint-disable-next-line react-hooks/exhaustive-deps
 	const renderChart = useCallback( () => {
 		renderFn( { containerRef, tooltipRef, lastMouseXRef } );
-	}, deps );
+	}, [ renderFn ] );
 
 	// Initial render and data change.
 	useEffect( () => {
