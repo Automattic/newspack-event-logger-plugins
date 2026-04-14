@@ -527,12 +527,30 @@ class ReqgrepCommand extends WP_CLI_Command {
 			$tenth    = (int) ( ( $ts - \floor( $ts ) ) * 10 );
 			$time_str = \gmdate( 'Y-m-d H:i:s', (int) $ts ) . ".{$tenth}";
 
-			// Print dots for elapsed seconds.
+			// Print dots for elapsed seconds using escalating intervals so a
+			// multi-hour or multi-day gap doesn't blow up memory. First 10 rows
+			// at 1s, next 10 at 10s, next 10 at 100s, etc. — O(log gap) rows.
+			// Mirrors the JS placeholder logic in logEntryUtils.js.
 			if ( $this->fmt_last_timestamp ) {
-				$count = (int) $ts - (int) $this->fmt_last_timestamp;
-				for ( $i = 1; $i < $count; $i++ ) {
-					$dot_time = \gmdate( 'Y-m-d H:i:s', (int) $this->fmt_last_timestamp + $i ) . ".{$tenth}";
-					$output .= \sprintf( "%4d: %22s %s.\n", $number, $dot_time, \str_repeat( ' ', $this->fmt_indent ) );
+				$last_sec = (int) $this->fmt_last_timestamp;
+				$curr_sec = (int) $ts;
+				if ( $curr_sec > $last_sec + 1 ) {
+					$interval    = 1;
+					$rows_at_iv  = 0;
+					$s           = $last_sec + 1;
+					while ( $s < $curr_sec ) {
+						$dot_time = \gmdate( 'Y-m-d H:i:s', $s ) . ".{$tenth}";
+						$output  .= \sprintf( "%4d: %22s %s.\n", $number, $dot_time, \str_repeat( ' ', $this->fmt_indent ) );
+						++$rows_at_iv;
+						if ( $rows_at_iv >= 10 ) {
+							$interval  *= 10;
+							$rows_at_iv = 0;
+							// Jump to next interval-aligned boundary.
+							$s = ( \intdiv( $s, $interval ) + 1 ) * $interval;
+						} else {
+							$s += $interval;
+						}
+					}
 				}
 			}
 		}

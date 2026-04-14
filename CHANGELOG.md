@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.21] - 2026-04-14
+
+### Fixed
+
+- `wp eventlog reqgrep`: crashed with a 190MB allocation error (`Allowed memory size of 536870912 bytes exhausted`) when a matched request had entries with large timestamp gaps. The formatter's "elapsed seconds" dot loop appended one line per second between consecutive entries — O(gap_seconds) lines. A request spanning hours or days produced millions of rows, filling PHP's string buffer until it exceeded the memory limit. Ported the escalating-interval pattern from `logEntryUtils.js` (dashboard): first 10 rows at 1s, next 10 at 10s, next 10 at 100s, etc. A 30-day gap now produces ~62 rows instead of 2.6M, using ~2MB instead of >190MB.
+
 ## [2.4.20] - 2026-04-14
 
 ### Fixed
