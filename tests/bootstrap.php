@@ -30,6 +30,10 @@ $_SERVER['HTTP_HOST']      = 'localhost';
 // Point config to test config file.
 putenv( 'LOCAL_EVENT_LOGGER_CONF=' . __DIR__ . '/event-logger-test-config.php' );
 
+// Tests write temp config files under /tmp; production Config only allows /usr/src.
+// Redirect PHP's error_log() to /dev/null so negative-path tests don't spew into test output.
+ini_set( 'error_log', '/dev/null' );
+
 // Load Composer autoloaders from each plugin.
 $autoloaders = [
 	WP_PLUGIN_DIR . '/newspack-event-logger/vendor/autoload.php',
@@ -57,6 +61,17 @@ foreach ( $class_files as $class_file ) {
 		require_once $class_file;
 	}
 }
+
+// Allow tests to point LOCAL_EVENT_LOGGER_CONF at temp files under /tmp.
+// Production Config::$allowed_config_dirs is locked to /usr/src as a security measure;
+// widen it here (reflection, test-only) so WorkerCommandTest et al. can validate temp configs.
+$_allowed_ref = new ReflectionProperty( \Newspack_Event_Logger\Config::class, 'allowed_config_dirs' );
+$_allowed_ref->setAccessible( true );
+$_current_dirs = $_allowed_ref->getValue();
+if ( ! in_array( '/tmp', $_current_dirs, true ) ) {
+	$_allowed_ref->setValue( null, array_merge( $_current_dirs, [ '/tmp' ] ) );
+}
+unset( $_allowed_ref, $_current_dirs );
 
 // ── Minimal WordPress Function Stubs ──────────────────────────────────────────
 // Only stub what the tested classes actually call.

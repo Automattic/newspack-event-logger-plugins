@@ -17,6 +17,8 @@ class ConfigTest extends TestCase {
 
 	protected function setUp(): void {
 		parent::setUp();
+		// Restore test config env var — other tests may have unset or mutated it.
+		\putenv( 'LOCAL_EVENT_LOGGER_CONF=' . \dirname( __DIR__ ) . '/event-logger-test-config.php' );
 		Config::reset();
 		$this->temp_dir = '/tmp/event-logger-test-config-' . \uniqid();
 		@\mkdir( $this->temp_dir, 0755, true );
@@ -386,13 +388,20 @@ class ConfigTest extends TestCase {
 		$ref = new \ReflectionMethod( Config::class, 'validate_config_path' );
 		$ref->setAccessible( true );
 
-		// Create a real file outside allowed dirs.
-		$path = $this->temp_dir . '/evil-config.php';
+		// Create a real file outside all allowed dirs. Tests widen allowed dirs to include
+		// /tmp (via bootstrap.php reflection hack), so use /var/tmp which is not allowed.
+		$outside_dir = '/var/tmp/event-logger-test-evil-' . \uniqid();
+		@\mkdir( $outside_dir, 0755, true );
+		$path = $outside_dir . '/evil-config.php';
 		\file_put_contents( $path, "<?php\nreturn [];\n" );
 
-		$result = $ref->invoke( null, $path );
-		// temp_dir is under /tmp which is not in allowed dirs, so should be null.
-		$this->assertNull( $result );
+		try {
+			$result = $ref->invoke( null, $path );
+			$this->assertNull( $result );
+		} finally {
+			@\unlink( $path );
+			@\rmdir( $outside_dir );
+		}
 	}
 
 	// ── validate_config_values ──────────────────────────────────────────

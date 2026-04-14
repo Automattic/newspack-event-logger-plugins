@@ -19,6 +19,8 @@ class WorkersControllerTest extends \PHPUnit\Framework\TestCase {
 
 	protected function setUp(): void {
 		parent::setUp();
+		// Restore test config env var — other tests may have unset or mutated it.
+		\putenv( 'LOCAL_EVENT_LOGGER_CONF=' . \dirname( __DIR__ ) . '/event-logger-test-config.php' );
 		Config::reset();
 
 		// Use the test config's base_directory (/tmp/event-logger-test).

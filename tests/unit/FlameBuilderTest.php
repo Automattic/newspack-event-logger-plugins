@@ -542,6 +542,32 @@ class FlameBuilderTest extends TestCase {
 		$this->assertArrayHasKey( 'web1.example.com', $hour_data );
 	}
 
+	public function test_missing_dimensional_values_fall_back_to_unknown(): void {
+		$context = $this->make_context();
+		// make_request() omits ja4_hash, http_from, country_code, user_agent by default.
+		$request                    = $this->make_request( [ 'duration_ms' => 150.0, 'status_code' => 200 ] );
+		$request['status_category'] = '2xx';
+		$url_hash                   = RequestBuilder::url_hash( $request['url'] );
+		$flame                      = [ 'name' => 'request', 'value' => 150.0, 'children' => [] ];
+
+		$this->accumulate( $url_hash, $flame, [], $request, $context );
+		$this->promote_pending( $context );
+
+		// Every dimension that was missing on the request should count under 'Unknown'.
+		foreach ( [ 'ja4', 'from', 'country', 'ua' ] as $dim ) {
+			$this->assertNotEmpty( $context['dim_stats'][ $dim ], "dim_stats[$dim] should not be empty" );
+			$hour_data = \reset( $context['dim_stats'][ $dim ] );
+			$this->assertArrayHasKey( 'Unknown', $hour_data, "dim '$dim' should have Unknown bucket" );
+			$this->assertSame( 1, $hour_data['Unknown']['c'], "dim '$dim' Unknown count should be 1" );
+			$this->assertEqualsWithDelta( 150.0, $hour_data['Unknown']['s'], 0.01 );
+		}
+
+		// Dimensions that WERE set should NOT have an Unknown bucket from this request.
+		$method_hour = \reset( $context['dim_stats']['method'] );
+		$this->assertArrayHasKey( 'GET', $method_hour );
+		$this->assertArrayNotHasKey( 'Unknown', $method_hour );
+	}
+
 	// ── accumulate_all_stats — peak_mb tracking ───────────────────────────
 
 	public function test_peak_mb_accumulated_in_url_stats(): void {

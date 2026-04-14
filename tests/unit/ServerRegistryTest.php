@@ -345,8 +345,8 @@ class ServerRegistryTest extends TestCase {
 		$server = $registry->get( 'config-server' );
 		$this->assertFalse( $server['enabled'], 'Config-file server should now be disabled' );
 
-		// Clean up env.
-		\putenv( 'LOCAL_EVENT_LOGGER_CONF' );
+		// Clean up env — restore to test config, not unset, to avoid polluting later tests.
+		\putenv( 'LOCAL_EVENT_LOGGER_CONF=' . \dirname( __DIR__ ) . '/event-logger-test-config.php' );
 	}
 
 	// ── get_all() normalization ─────────────────────────────────────────

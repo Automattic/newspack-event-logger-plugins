@@ -18,6 +18,8 @@ class AggregatorAdminTest extends TestCase {
 
 	protected function setUp(): void {
 		parent::setUp();
+		// Restore test config env var — other tests may have unset or mutated it.
+		\putenv( 'LOCAL_EVENT_LOGGER_CONF=' . \dirname( __DIR__ ) . '/event-logger-test-config.php' );
 		Config::reset();
 		$GLOBALS['_wp_test_registered_settings'] = [];
 		$GLOBALS['_wp_test_options']             = [];

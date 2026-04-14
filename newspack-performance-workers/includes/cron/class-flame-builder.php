@@ -662,7 +662,7 @@ class FlameBuilder {
 		foreach ( self::DIM_FIELDS as $dim => $field ) {
 			$val = $request[ $field ] ?? '';
 			if ( '' === $val ) {
-				continue;
+				$val = 'Unknown';
 			}
 			if ( ! $intern_full ) {
 				$val = $intern[ $val ] ??= $val;

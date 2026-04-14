@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.20] - 2026-04-14
+
+### Fixed
+
+- FlameBuilder: requests missing a value for a dimensional field (`country_code`, `http_from`, `user_agent`, `ja4_hash`) were silently dropped from that dimension's counts, causing breakdown charts (e.g. Request Volume by JA4 Hash, From) to stack to less than the total request count. Missing values now fall back to `Unknown` so every request contributes to every dimension, and stacked breakdown totals match the overall volume line. `Unknown` is distinct from `Other` (which still represents top-N overflow from the 20-value cap per bucket).
+- Tests: eliminated 6 pre-existing failures in the coverage suite caused by cross-test pollution and path validation. (1) `tests/bootstrap.php` now widens `Config::$allowed_config_dirs` via reflection to include `/tmp`, so the 12 test files that write temp config files under `/tmp/event-logger-test-*` actually get their configs loaded instead of silently falling back to the deployed production config (which was pointing `base_directory` at live worker locks and leaking `allowed_users: ['adminnewspack']` into permission checks). (2) `ServerRegistryTest::test_config_file_server_update_restricted_to_enabled_toggle` was calling `putenv('LOCAL_EVENT_LOGGER_CONF')` (unset) without restoring, leaking missing-env state into every later test under `executionOrder="depends,defects"`; now restores the test config path. (3) `AggregatorAdminTest`, `ConfigTest`, and `WorkersControllerTest` now defensively `putenv` the test config in `setUp()` so their state doesn't depend on prior tests. (4) `ConfigTest::test_validate_config_path_rejects_outside_allowed_dirs` moved from `/tmp` to `/var/tmp` to stay outside the now-widened allowed dirs. (5) `tests/bootstrap.php` redirects PHP `error_log()` to `/dev/null` so negative-path tests (null byte rejection, invalid paths, etc.) don't spew into test output.
+
 ## [2.4.19] - 2026-04-13
 
 ### Changed
