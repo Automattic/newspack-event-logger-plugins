@@ -163,6 +163,15 @@ class ReqgrepCommand extends WP_CLI_Command {
 	private bool $raw = false;
 
 	/**
+	 * Starting offset for cat mode: 'start' (default, scan all history — grep
+	 * semantics) or 'recent' (opt-in via --recent for fast lookups that only
+	 * need the most recent segment or two).
+	 *
+	 * @var string
+	 */
+	private string $cat_offset = 'start';
+
+	/**
 	 * Bucket size for history.
 	 *
 	 * @var int
@@ -215,6 +224,11 @@ class ReqgrepCommand extends WP_CLI_Command {
 	 * [--follow]
 	 * : Follow mode - tail all partitions continuously (like tail -f).
 	 *
+	 * [--recent]
+	 * : Only scan the second-to-last segment and newer (roughly the last ~1
+	 * segment of history). Fast for "what's happening right now?" queries
+	 * on busy firehoses. Default is to scan everything, like grep.
+	 *
 	 * [--raw]
 	 * : Output raw JSON instead of formatted.
 	 *
@@ -238,8 +252,11 @@ class ReqgrepCommand extends WP_CLI_Command {
 	 *
 	 * ## EXAMPLES
 	 *
-	 *     # Search all partitions for URL pattern
+	 *     # Search all firehose segments for URL pattern (grep semantics)
 	 *     wp eventlog reqgrep /calendar
+	 *
+	 *     # Fast lookup — only scan the most recent segments
+	 *     wp eventlog reqgrep /calendar --recent
 	 *
 	 *     # Follow mode
 	 *     wp eventlog reqgrep --follow
@@ -261,6 +278,7 @@ class ReqgrepCommand extends WP_CLI_Command {
 		$this->bucket_size = \max( 1, \min( 10000, (int) ( $assoc_args['bucket-size'] ?? 250 ) ) );
 		$this->num_buckets = \max( 1, \min( 100, (int) ( $assoc_args['num-buckets'] ?? 10 ) ) );
 		$follow            = isset( $assoc_args['follow'] );
+		$this->cat_offset  = isset( $assoc_args['recent'] ) ? 'recent' : 'start';
 
 		// Load config.
 		$this->config         = Config::load_config();
@@ -290,8 +308,20 @@ class ReqgrepCommand extends WP_CLI_Command {
 			$this->base_dir = $real_path;
 		}
 
-		// Check if stdin has data (pipe mode).
-		$use_stdin = ! posix_isatty( STDIN );
+		// Detect pipe/redirect mode. `posix_isatty(STDIN)` isn't enough —
+		// under `docker exec` (without -i), stdin is /dev/null, which is a
+		// character device (not a tty, but also not data). fstat gives us the
+		// actual file type: S_IFIFO = pipe (`cmd | wp …`), S_IFREG = regular
+		// file (`wp … < file`). Everything else (tty, /dev/null, sockets) =
+		// "no piped data, use cat mode".
+		$use_stdin = false;
+		if ( \defined( 'STDIN' ) ) {
+			$stat = @\fstat( STDIN );
+			if ( $stat ) {
+				$file_type  = $stat['mode'] & 0170000;
+				$use_stdin  = 0010000 === $file_type || 0100000 === $file_type;
+			}
+		}
 
 		if ( $use_stdin ) {
 			$this->process_stdin();
@@ -318,7 +348,7 @@ class ReqgrepCommand extends WP_CLI_Command {
 	private function cat_mode(): void {
 		for ( $p = 0; $p < $this->num_partitions; $p++ ) {
 			$firehose = $this->get_firehose( $p );
-			$reader   = $firehose->reader( 'start' );
+			$reader   = $firehose->reader( $this->cat_offset );
 
 			while ( $reader->open() ) {
 				// phpcs:ignore WordPress.CodeAnalysis.AssignmentInCondition.FoundInWhileCondition

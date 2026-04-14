@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.24] - 2026-04-14
+
+### Fixed
+
+- Supervisor: disabling `enable_logging` in settings used to call `cleanup_all()` on every supervisor tick, recursively deleting the entire base directory — including firehose logs that had been copied in from production for debugging. The "data kept disappearing" was the supervisor every ~minute. Disabling logging now only unschedules the supervisor cron; it never wipes on-disk state. Full cleanup is still performed on plugin deactivation via `Supervisor::deactivate()` where it belongs. (`newspack-event-logger/includes/cron/class-supervisor.php`)
+- Supervisor: when `base_directory` changes, the old directory is no longer recursively deleted. The user can remove it manually if they want.
+- Config: `Config::load_config()` cached its result even when called during the plugin-load phase. `newspack-performance-logger.php` instantiates `LogManager` during its own plugin load, which calls `Config::load_config()` — at that moment `newspack-performance-workers` hasn't registered its `enable_workers` option schema filter yet (it loads alphabetically later). Config cached a view where `enable_workers` wasn't in the schema at all, so the WP option was never read, and the file default (`true`) won. Result: unchecking "Enable Workers" in settings had no effect — the supervisor still registered and spawned RequestBuilder + FlameBuilder workers. `Config::load_config()` now only caches after `did_action('plugins_loaded')`, so schema filters from plugins that load later are picked up on the first real cached read. (`newspack-event-logger/includes/class-config.php`)
+- `wp eventlog reqgrep`: produced no output under `docker exec` (and any other non-TTY invocation where stdin is `/dev/null`). The pipe-mode detection was `! posix_isatty(STDIN)`, which is false for *any* non-tty — including `/dev/null`. So the command silently entered `process_stdin()`, read an empty stream, and exited with nothing. Fixed by using `fstat(STDIN)` to detect the actual file type — only enter stdin mode for `S_IFIFO` (pipe) or `S_IFREG` (regular file redirect). TTYs and `/dev/null` fall through to cat mode. (`newspack-performance-logger/includes/cli/class-reqgrep-command.php`)
+- `wp eventlog reqgrep`: LRU cache eviction caused silent data loss when many in-flight rids needed to be buffered. The inflight buffer is now a proper `LruCache(100, 3)` — 300 slots total, sized to typical 125 PHP-FPM worker concurrency. When a bucket rotates out (either because another fills or 60s elapse), the `on_evict` callback prints each evicted rid as `[incomplete]` so data is never silently dropped. Each entry's `m` (message) field is truncated to 1024 bytes at ingest — matching `RequestBuilder::MAX_ENTRY_MESSAGE_LENGTH` — which keeps per-entry memory bounded regardless of the writer's own limits. Per-rid byte cap is 1MB. Worst-case cache size: 300 × 1MB = 300MB, comfortably under PHP's 512MB limit. Stress test: 500 rids × 5000 × 4KB entries (2.5M lines total) → peak 182MB with 297 evictions, stable throughout. (`newspack-performance-logger/includes/cli/class-reqgrep-command.php`)
+- `wp eventlog reqgrep`: `--raw` mode previously called `implode("\n", $lines)` on the entire rid buffer, allocating a single contiguous string the size of the full buffer in one go. It now streams each line directly to stdout.
+- `wp eventlog reqgrep`: formatter's "elapsed seconds" dot loop was unbounded — for a request with log entries spaced hours apart, it appended one line per elapsed second (~3600 lines per 1-hour gap). Multi-day gaps blew out PHP memory. Ported the escalating-interval pattern from `logEntryUtils.js`: first 10 rows at 1s, next 10 at 10s, next 10 at 100s, etc. A 30-day gap now produces ~60 rows in ~2MB instead of 2.6M rows in >190MB.
+
+### Changed
+
+- `wp eventlog reqgrep`: added `--recent` flag for fast lookups that only need to scan the last ~1 segment of history. Default behavior (scan every segment from oldest to newest) is unchanged — grep semantics.
+- `ReqgrepCommandTest`: rewritten around the new LruCache-backed inflight buffer. Tests for byte-cap, LRU eviction, and time-based stale cleanup replace the old line-count and timestamp-sweep tests.
+
 ## [2.4.23] - 2026-04-14
 
 ### Fixed

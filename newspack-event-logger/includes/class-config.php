@@ -173,11 +173,19 @@ class Config {
 			}
 		}
 
-		// Cache appropriately.
-		if ( $is_full ) {
-			self::$config_full = $config;
-		} else {
-			self::$config = $config;
+		// Only cache after plugins_loaded has fired — otherwise a plugin that
+		// loads later and adds to the option schema (e.g. performance-workers
+		// adding `enable_workers`) will hit a stale cache that was populated
+		// before its filter was registered. Without this guard, disabling
+		// workers in settings has no effect because the cache still reports
+		// the file-default value.
+		$plugins_loaded_done = \function_exists( 'did_action' ) && \did_action( 'plugins_loaded' );
+		if ( $plugins_loaded_done ) {
+			if ( $is_full ) {
+				self::$config_full = $config;
+			} else {
+				self::$config = $config;
+			}
 		}
 
 		return $config;

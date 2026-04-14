@@ -318,13 +318,21 @@ class Supervisor extends SupervisorBase {
 		$new_base_dir       = self::get_base_dir();
 
 		if ( ! $logging_enabled ) {
-			self::cleanup_all();
+			// Logging disabled via settings: don't spawn new workers and
+			// unschedule so the supervisor goes quiet. Intentionally do NOT
+			// wipe the base directory here — disabling logging should stop
+			// new writes, not destroy historical firehose data the user may
+			// be inspecting (or that was copied in from another environment
+			// for debugging). Full cleanup only happens on plugin
+			// deactivation via Supervisor::deactivate().
 			self::unschedule();
 			return false;
 		}
 
 		if ( $new_base_dir !== $current_base_dir ) {
-			parent::delete_directory_recursive( $current_base_dir );
+			// Base directory moved. Leave the old directory in place —
+			// the user can remove it manually. Silently recursive-deleting
+			// whatever was at the previous path is too dangerous.
 			return false;
 		}
 

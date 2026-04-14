@@ -8,6 +8,7 @@
 namespace Newspack_Event_Logger\Tests\Unit;
 
 use PHPUnit\Framework\TestCase;
+use Newspack_Event_Logger\LruCache;
 use Newspack_Performance_Logger\CLI\ReqgrepCommand;
 
 #[\PHPUnit\Framework\Attributes\CoversClass( ReqgrepCommand::class )]
@@ -64,7 +65,19 @@ class ReqgrepCommandTest extends TestCase {
 		$set( 'incomplete', $incomplete );
 		$set( 'bucket_size', $bucket_size );
 		$set( 'num_buckets', $num_buckets );
-		$set( 'time', \time() );
+
+		// Initialize in-flight LruCache with eviction → print [incomplete],
+		// mirroring what __invoke() sets up.
+		$inflight = ( new LruCache( 100, 3 ) )->with_timed_rotation(
+			60.0,
+			function ( string $rid, \stdClass $state ) use ( $cmd ) {
+				$output = new \ReflectionMethod( $cmd, 'output_request' );
+				$output->setAccessible( true );
+				$output->invoke( $cmd, $state->lines );
+				echo "[incomplete]\n\n";
+			}
+		);
+		$set( 'inflight', $inflight );
 
 		$this->process_line = new \ReflectionMethod( $cmd, 'process_line' );
 		$this->process_line->setAccessible( true );
@@ -88,6 +101,38 @@ class ReqgrepCommandTest extends TestCase {
 		return $ref->getValue( $this->cmd );
 	}
 
+	/**
+	 * Read the inflight LruCache and return an associative array of
+	 * [rid => [line, line, ...]], matching the shape tests expect from
+	 * the old $this->requests array.
+	 */
+	private function get_requests(): array {
+		$inflight = $this->get_prop( 'inflight' );
+		if ( null === $inflight ) {
+			return [];
+		}
+		$out = [];
+		foreach ( $inflight->iterate() as $rid => $state ) {
+			$out[ $rid ] = $state->lines;
+		}
+		return $out;
+	}
+
+	/**
+	 * Directly put a rid into the inflight cache (for tests that previously
+	 * poked $this->requests[$rid] = [...]).
+	 */
+	private function set_request_lines( string $rid, array $lines ): void {
+		$inflight = $this->get_prop( 'inflight' );
+		$state        = new \stdClass();
+		$state->lines = $lines;
+		$state->bytes = 0;
+		foreach ( $lines as $l ) {
+			$state->bytes += \strlen( $l );
+		}
+		$inflight->set( $rid, $state );
+	}
+
 	private function set_prop( string $prop, $value ): void {
 		$ref = new \ReflectionProperty( $this->cmd, $prop );
 		$ref->setAccessible( true );
@@ -107,19 +152,19 @@ class ReqgrepCommandTest extends TestCase {
 	public function test_process_line_skips_empty(): void {
 		$this->make_cmd();
 		$this->process_line->invoke( $this->cmd, '' );
-		$this->assertEmpty( $this->get_prop( 'requests' ) );
+		$this->assertEmpty( $this->get_requests() );
 	}
 
 	public function test_process_line_skips_invalid_json(): void {
 		$this->make_cmd();
 		$this->process_line->invoke( $this->cmd, 'not-json{{{' );
-		$this->assertEmpty( $this->get_prop( 'requests' ) );
+		$this->assertEmpty( $this->get_requests() );
 	}
 
 	public function test_process_line_skips_entry_without_rid(): void {
 		$this->make_cmd();
 		$this->process_line->invoke( $this->cmd, '{"k":"test","n":1}' );
-		$this->assertEmpty( $this->get_prop( 'requests' ) );
+		$this->assertEmpty( $this->get_requests() );
 	}
 
 	public function test_process_line_tracks_matching_request(): void {
@@ -128,7 +173,7 @@ class ReqgrepCommandTest extends TestCase {
 		$line = $this->line( 'r1', 'request', 'GET /test/page', 1 );
 		$this->process_line->invoke( $this->cmd, $line );
 
-		$requests = $this->get_prop( 'requests' );
+		$requests = $this->get_requests();
 		$this->assertArrayHasKey( 'r1', $requests );
 		$this->assertCount( 1, $requests['r1'] );
 	}
@@ -140,7 +185,7 @@ class ReqgrepCommandTest extends TestCase {
 		$this->process_line->invoke( $this->cmd, $this->line( 'r1', 'hook (start)', 'init', 2 ) );
 		$this->process_line->invoke( $this->cmd, $this->line( 'r1', 'hook (complete)', '', 3 ) );
 
-		$requests = $this->get_prop( 'requests' );
+		$requests = $this->get_requests();
 		$this->assertCount( 3, $requests['r1'] );
 	}
 
@@ -154,7 +199,7 @@ class ReqgrepCommandTest extends TestCase {
 		$output = \ob_get_clean();
 
 		// Request should be removed from tracking after output.
-		$this->assertEmpty( $this->get_prop( 'requests' ) );
+		$this->assertEmpty( $this->get_requests() );
 		$this->assertNotEmpty( $output );
 	}
 
@@ -163,7 +208,7 @@ class ReqgrepCommandTest extends TestCase {
 
 		$this->process_line->invoke( $this->cmd, $this->line( 'r1', 'request', 'GET /about', 1 ) );
 
-		$requests = $this->get_prop( 'requests' );
+		$requests = $this->get_requests();
 		$this->assertArrayNotHasKey( 'r1', $requests );
 	}
 
@@ -214,47 +259,48 @@ class ReqgrepCommandTest extends TestCase {
 		// Second line matches pattern — should pull r1's start from history.
 		$this->process_line->invoke( $this->cmd, $this->line( 'r1', 'request', 'GET /target/page', 2 ) );
 
-		$requests = $this->get_prop( 'requests' );
+		$requests = $this->get_requests();
 		$this->assertArrayHasKey( 'r1', $requests );
 		$this->assertCount( 2, $requests['r1'], 'Should include the start line from history' );
 	}
 
 	// ── process_line: bounds checking ────────────────────────────────────
 
-	public function test_process_line_caps_lines_per_request(): void {
+	public function test_process_line_caps_bytes_per_request(): void {
 		$this->make_cmd( '.' );
 
 		// Track a request.
 		$this->process_line->invoke( $this->cmd, $this->line( 'r1', 'request', 'GET /', 1 ) );
 
-		// Exceed MAX_LINES_PER_REQUEST (20000) — test with reflection override.
-		$ref = new \ReflectionProperty( $this->cmd, 'requests' );
-		$ref->setAccessible( true );
-		$current = $ref->getValue( $this->cmd );
-		$current['r1'] = \array_fill( 0, 20000, '{}' );
-		$ref->setValue( $this->cmd, $current );
+		// Overflow the per-rid byte cap by pre-filling state->bytes near the max.
+		$inflight    = $this->get_prop( 'inflight' );
+		$state       = $inflight->get( 'r1' );
+		$state->bytes = 1024 * 1024; // 1MB = MAX_BYTES_PER_REQUEST.
 
-		// This line should not be added.
-		$this->process_line->invoke( $this->cmd, $this->line( 'r1', 'hook (start)', 'extra', 20001 ) );
+		// Next line should not be added because byte cap is hit.
+		$line_count_before = \count( $state->lines );
+		$this->process_line->invoke( $this->cmd, $this->line( 'r1', 'hook (start)', 'extra', 2 ) );
 
-		$requests = $this->get_prop( 'requests' );
-		$this->assertCount( 20000, $requests['r1'] );
+		$this->assertSame( $line_count_before, \count( $state->lines ), 'Line should be dropped once byte cap is hit' );
 	}
 
 	public function test_process_line_evicts_oldest_when_too_many_requests(): void {
 		$this->make_cmd( '.' );
 
-		// Track 10000 requests.
-		for ( $i = 0; $i < 10000; $i++ ) {
+		// LruCache is 100 × 3 = 300 slots. Track 301 distinct requests —
+		// the 301st should trigger a bucket rotation and evict the oldest
+		// via the on_evict callback (which prints as [incomplete]).
+		\ob_start();
+		for ( $i = 0; $i < 301; $i++ ) {
 			$this->process_line->invoke( $this->cmd, $this->line( "r{$i}", 'request', 'GET /', 1 ) );
 		}
+		$output = \ob_get_clean();
 
-		// One more should evict the oldest.
-		$this->process_line->invoke( $this->cmd, $this->line( 'r10000', 'request', 'GET /', 1 ) );
-
-		$requests = $this->get_prop( 'requests' );
-		$this->assertCount( 10000, $requests );
-		$this->assertArrayNotHasKey( 'r0', $requests );
+		$requests = $this->get_requests();
+		// r0 should have been evicted from the oldest bucket.
+		$this->assertArrayNotHasKey( 'r0', $requests, 'Oldest request should be evicted' );
+		// At least one incomplete marker printed during rotation.
+		$this->assertStringContainsString( '[incomplete]', $output );
 	}
 
 	// ── process_line: exact rid match ────────────────────────────────────
@@ -264,7 +310,7 @@ class ReqgrepCommandTest extends TestCase {
 
 		$this->process_line->invoke( $this->cmd, $this->line( 'abc123', 'request', 'GET /unrelated', 1 ) );
 
-		$requests = $this->get_prop( 'requests' );
+		$requests = $this->get_requests();
 		$this->assertArrayHasKey( 'abc123', $requests );
 	}
 
@@ -282,7 +328,7 @@ class ReqgrepCommandTest extends TestCase {
 		// In incomplete mode, complete requests are not output inline.
 		$this->assertEmpty( $output );
 		// But the request should still be removed.
-		$this->assertEmpty( $this->get_prop( 'requests' ) );
+		$this->assertEmpty( $this->get_requests() );
 	}
 
 	// ── output_request: raw mode ─────────────────────────────────────────
@@ -556,22 +602,26 @@ class ReqgrepCommandTest extends TestCase {
 		// Track a request.
 		$this->process_line->invoke( $this->cmd, $this->line( 'stale-r1', 'request', 'GET /', 1 ) );
 
-		// Set the request's timestamp to 20 minutes ago.
-		$timestamps = $this->get_prop( 'timestamps' );
-		$timestamps['stale-r1'] = \time() - 1200; // 20 min ago, > 900s stale threshold.
-		$this->set_prop( 'timestamps', $timestamps );
+		// Force the LruCache's last_rotation time into the past so the next
+		// rotate_if_due() call (at the end of process_line) fires a rotation.
+		// After NUM_BUCKETS rotations the stale-r1 bucket rolls out and the
+		// on_evict callback prints it as [incomplete].
+		$inflight = $this->get_prop( 'inflight' );
+		$ref      = new \ReflectionProperty( $inflight, 'last_rotation' );
+		$ref->setAccessible( true );
 
-		// Set line_count to 10000 so next increment (10001) triggers cleanup.
-		$this->set_prop( 'line_count', 10000 );
-
-		// One more line triggers cleanup.
 		\ob_start();
-		$this->process_line->invoke( $this->cmd, $this->line( 'other-r2', 'request', 'GET /other', 1 ) );
+		// Each call advances one "rotation window" back; need INFLIGHT_NUM_BUCKETS
+		// rotations (3) to push the bucket holding stale-r1 out.
+		for ( $i = 0; $i < 4; $i++ ) {
+			$ref->setValue( $inflight, \microtime( true ) - 120.0 ); // >60s ago.
+			$this->process_line->invoke( $this->cmd, $this->line( "fill-{$i}", 'request', 'GET /', 1 ) );
+		}
 		$output = \ob_get_clean();
 
-		// Stale request should have been flushed.
+		// Stale request should have been flushed via time-based eviction.
 		$this->assertStringContainsString( '[incomplete]', $output );
-		$requests = $this->get_prop( 'requests' );
+		$requests = $this->get_requests();
 		$this->assertArrayNotHasKey( 'stale-r1', $requests, 'Stale request should be removed' );
 	}
 
@@ -627,7 +677,7 @@ class ReqgrepCommandTest extends TestCase {
 
 		// Should output the request immediately.
 		$this->assertNotEmpty( $output, 'Complete line that matches should output immediately' );
-		$this->assertEmpty( $this->get_prop( 'requests' ), 'Request should be removed after output' );
+		$this->assertEmpty( $this->get_requests(), 'Request should be removed after output' );
 	}
 
 	// ── process_line: history MAX_LINES_PER_REQUEST_IN_HISTORY ──────────
