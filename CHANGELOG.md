@@ -7,7 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [2.4.21] - 2026-04-14
+## [2.4.22] - 2026-04-14
+
+### Fixed
+
+- `wp eventlog reqgrep`: still OOM'd after 2.4.21 when a matched request held many multi-KB log lines. 2.4.21 fixed the formatter's dot loop (O(log gap)), but the underlying `$this->requests[$rid]` buffer was capped only by line count (`MAX_LINES_PER_REQUEST = 20000`). With entries from workers or gyrobase emitting lines larger than PIPE_BUF (~12KB observed), a single long-running timed-out rid could hold ~260MB and the process died either in `implode` (`--raw` mode, line 476) or while format_entry was iterating (line 491). Add `MAX_BYTES_PER_REQUEST = 8MB` and a central `append_tracked_line()` helper that enforces both caps; history-merge loops also stop when the cap is hit. `--raw` mode now streams each line to stdout instead of calling `implode("\n", $lines)`, which previously allocated a single contiguous string the size of the full rid buffer.
 
 ### Fixed
 

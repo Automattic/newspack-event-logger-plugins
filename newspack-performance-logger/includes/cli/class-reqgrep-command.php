@@ -50,6 +50,15 @@ class ReqgrepCommand extends WP_CLI_Command {
 	private const MAX_LINES_PER_REQUEST = 20000;
 
 	/**
+	 * Maximum bytes per in-progress request. Caps memory held per rid independent
+	 * of line count — some writers (gyrobase, workers) emit lines larger than
+	 * PIPE_BUF, so a line-only cap can silently hold hundreds of MB per rid.
+	 *
+	 * @var int
+	 */
+	private const MAX_BYTES_PER_REQUEST = 8 * 1024 * 1024;
+
+	/**
 	 * Maximum lines per request in history buckets to prevent unbounded memory growth.
 	 *
 	 * @var int
@@ -83,6 +92,13 @@ class ReqgrepCommand extends WP_CLI_Command {
 	 * @var array<string, array>
 	 */
 	private array $requests = [];
+
+	/**
+	 * Cumulative bytes stored per rid in $this->requests (for MAX_BYTES_PER_REQUEST).
+	 *
+	 * @var array<string, int>
+	 */
+	private array $request_bytes = [];
 
 	/**
 	 * Timestamps for request tracking (for stale cleanup).
@@ -381,23 +397,23 @@ class ReqgrepCommand extends WP_CLI_Command {
 		$key = $entry['k'] ?? '';
 
 		if ( isset( $this->requests[ $rid ] ) ) {
-			// Already tracking this request (with bounds check).
-			if ( \count( $this->requests[ $rid ] ) < self::MAX_LINES_PER_REQUEST ) {
-				$this->requests[ $rid ][] = $line;
-			}
+			// Already tracking this request (with line + byte bounds check).
+			$this->append_tracked_line( $rid, $line );
 			if ( 'process (complete)' === $key ) {
 				if ( ! $this->incomplete ) {
 					$this->output_request( $this->requests[ $rid ] );
 				}
-				unset( $this->requests[ $rid ], $this->timestamps[ $rid ] );
+				unset( $this->requests[ $rid ], $this->timestamps[ $rid ], $this->request_bytes[ $rid ] );
 			}
 		} elseif ( $rid === $this->pattern || \preg_match( $this->pattern_regex, $line ) ) {
 			// New matching request.
 			if ( \count( $this->requests ) >= 10000 ) {
 				// Evict oldest to prevent unbounded memory growth.
-				\array_shift( $this->requests );
+				$evict_rid = \array_key_first( $this->requests );
+				unset( $this->requests[ $evict_rid ], $this->timestamps[ $evict_rid ], $this->request_bytes[ $evict_rid ] );
 			}
-			$this->timestamps[ $rid ] = $this->time;
+			$this->timestamps[ $rid ]    = $this->time;
+			$this->request_bytes[ $rid ] = 0;
 
 			// Check history for earlier entries.
 			foreach ( $this->history as $recent ) {
@@ -405,7 +421,11 @@ class ReqgrepCommand extends WP_CLI_Command {
 					if ( ! isset( $this->requests[ $rid ] ) ) {
 						$this->requests[ $rid ] = [];
 					}
-					$this->requests[ $rid ] = \array_merge( $this->requests[ $rid ], $recent[ $rid ] );
+					foreach ( $recent[ $rid ] as $hist_line ) {
+						if ( ! $this->append_tracked_line( $rid, $hist_line ) ) {
+							break 2; // Cap hit — stop merging history.
+						}
+					}
 				}
 			}
 
@@ -417,11 +437,11 @@ class ReqgrepCommand extends WP_CLI_Command {
 			if ( ! isset( $this->requests[ $rid ] ) ) {
 				$this->requests[ $rid ] = [];
 			}
-			$this->requests[ $rid ][] = $line;
+			$this->append_tracked_line( $rid, $line );
 
 			if ( 'process (complete)' === $key && ! $this->incomplete ) {
 				$this->output_request( $this->requests[ $rid ] );
-				unset( $this->requests[ $rid ], $this->timestamps[ $rid ] );
+				unset( $this->requests[ $rid ], $this->timestamps[ $rid ], $this->request_bytes[ $rid ] );
 			}
 		} else {
 			// Not matching - store in history (with bounds check).
@@ -449,11 +469,33 @@ class ReqgrepCommand extends WP_CLI_Command {
 				if ( $this->time - $ts >= 900 ) {
 					$this->output_request( $this->requests[ $rid ] );
 					echo "[incomplete]\n\n";
-					unset( $this->timestamps[ $rid ], $this->requests[ $rid ] );
+					unset( $this->timestamps[ $rid ], $this->requests[ $rid ], $this->request_bytes[ $rid ] );
 				}
 			}
 			$this->line_count = 0;
 		}
+	}
+
+	/**
+	 * Append a line to $this->requests[$rid], respecting line and byte caps.
+	 * Returns true if appended, false if cap hit (caller may want to stop merging).
+	 *
+	 * @param string $rid  Request ID.
+	 * @param string $line Raw JSON line.
+	 * @return bool True if stored, false if dropped due to cap.
+	 */
+	private function append_tracked_line( string $rid, string $line ): bool {
+		$line_bytes = \strlen( $line );
+		$cur_bytes  = $this->request_bytes[ $rid ] ?? 0;
+		if ( $cur_bytes + $line_bytes > self::MAX_BYTES_PER_REQUEST ) {
+			return false;
+		}
+		if ( isset( $this->requests[ $rid ] ) && \count( $this->requests[ $rid ] ) >= self::MAX_LINES_PER_REQUEST ) {
+			return false;
+		}
+		$this->requests[ $rid ][]      = $line;
+		$this->request_bytes[ $rid ]   = $cur_bytes + $line_bytes;
+		return true;
 	}
 
 	/**
@@ -473,7 +515,13 @@ class ReqgrepCommand extends WP_CLI_Command {
 	 */
 	private function output_request( array $lines ): void {
 		if ( $this->raw ) {
-			echo \implode( "\n", $lines ) . "\n\n";
+			// Stream each line directly — never implode into a single giant
+			// string, since a matched long-running request can hold many MB
+			// of lines and implode would allocate a contiguous copy.
+			foreach ( $lines as $line ) {
+				echo $line . "\n";
+			}
+			echo "\n";
 			return;
 		}
 
