@@ -12,6 +12,7 @@ namespace Newspack_Performance_Logger\CLI;
 use Newspack_Event_Logger\Config;
 use Newspack_Event_Logger\Firehose;
 use Newspack_Event_Logger\FirehoseReader;
+use Newspack_Event_Logger\LruCache;
 use WP_CLI;
 use WP_CLI_Command;
 
@@ -50,13 +51,24 @@ class ReqgrepCommand extends WP_CLI_Command {
 	private const MAX_LINES_PER_REQUEST = 20000;
 
 	/**
-	 * Maximum bytes per in-progress request. Caps memory held per rid independent
-	 * of line count — some writers (gyrobase, workers) emit lines larger than
-	 * PIPE_BUF, so a line-only cap can silently hold hundreds of MB per rid.
+	 * Maximum bytes per in-progress request (safety cap on top of line count
+	 * cap and per-entry `m` truncation). Paired with INFLIGHT_BUCKET_SIZE ×
+	 * INFLIGHT_NUM_BUCKETS to bound worst-case memory: 300 slots × 1MB =
+	 * 300MB ceiling, leaving headroom under PHP's default 512MB limit.
 	 *
 	 * @var int
 	 */
-	private const MAX_BYTES_PER_REQUEST = 8 * 1024 * 1024;
+	private const MAX_BYTES_PER_REQUEST = 1024 * 1024;
+
+	/**
+	 * Maximum length of each entry's `m` (message) field, matching
+	 * RequestBuilder's cap. Lines with longer `m` are decoded, truncated, and
+	 * re-encoded before storage — keeps per-entry memory bounded regardless of
+	 * the writer's own MAX_DATA_SIZE.
+	 *
+	 * @var int
+	 */
+	private const MAX_ENTRY_MESSAGE_LENGTH = 1024;
 
 	/**
 	 * Maximum lines per request in history buckets to prevent unbounded memory growth.
@@ -64,6 +76,21 @@ class ReqgrepCommand extends WP_CLI_Command {
 	 * @var int
 	 */
 	private const MAX_LINES_PER_REQUEST_IN_HISTORY = 10000;
+
+	/**
+	 * In-flight request cache capacity. 100 items × 3 buckets = 300 slots total,
+	 * well above the typical ~125 PHP-FPM worker concurrency ceiling. Anything
+	 * that falls out of the oldest bucket is printed as [incomplete].
+	 */
+	private const INFLIGHT_BUCKET_SIZE = 100;
+	private const INFLIGHT_NUM_BUCKETS = 3;
+
+	/**
+	 * Seconds between in-flight cache rotations. Any request that has sat
+	 * idle for (ROTATE_INTERVAL × NUM_BUCKETS) seconds is printed as [incomplete]
+	 * and dropped from the cache.
+	 */
+	private const INFLIGHT_ROTATE_INTERVAL = 60.0;
 
 	/**
 	 * Formatting state - indentation level.
@@ -87,25 +114,18 @@ class ReqgrepCommand extends WP_CLI_Command {
 	private float $fmt_last_timestamp = 0;
 
 	/**
-	 * In-progress requests by request ID.
+	 * In-flight matched requests. Values are stdClass with:
+	 *   ->lines array<string>  Truncated JSON lines for this rid.
+	 *   ->bytes int             Cumulative byte size of ->lines.
 	 *
-	 * @var array<string, array>
-	 */
-	private array $requests = [];
-
-	/**
-	 * Cumulative bytes stored per rid in $this->requests (for MAX_BYTES_PER_REQUEST).
+	 * LruCache handles eviction: oldest bucket rolls out after
+	 * INFLIGHT_NUM_BUCKETS × INFLIGHT_ROTATE_INTERVAL seconds of inactivity,
+	 * or immediately when the bucket fills. Evicted rids are printed as
+	 * [incomplete] via the on_evict callback set in __invoke().
 	 *
-	 * @var array<string, int>
+	 * @var LruCache|null
 	 */
-	private array $request_bytes = [];
-
-	/**
-	 * Timestamps for request tracking (for stale cleanup).
-	 *
-	 * @var array<string, int>
-	 */
-	private array $timestamps = [];
+	private ?LruCache $inflight = null;
 
 	/**
 	 * History buckets for catching request starts.
@@ -113,20 +133,6 @@ class ReqgrepCommand extends WP_CLI_Command {
 	 * @var array
 	 */
 	private array $history = [ [] ];
-
-	/**
-	 * Current time for cleanup checks.
-	 *
-	 * @var int
-	 */
-	private int $time;
-
-	/**
-	 * Line counter for periodic cleanup.
-	 *
-	 * @var int
-	 */
-	private int $line_count = 0;
 
 	/**
 	 * Current search pattern.
@@ -260,7 +266,16 @@ class ReqgrepCommand extends WP_CLI_Command {
 		$this->config         = Config::load_config();
 		$this->base_dir       = $assoc_args['path'] ?? Config::get_logs_directory() . '/firehose.log';
 		$this->num_partitions = $this->config['num_partitions'] ?? 1;
-		$this->time           = \time();
+
+		// Initialize in-flight LRU cache with eviction → print as [incomplete].
+		$this->inflight = ( new LruCache( self::INFLIGHT_BUCKET_SIZE, self::INFLIGHT_NUM_BUCKETS ) )
+			->with_timed_rotation(
+				self::INFLIGHT_ROTATE_INTERVAL,
+				function ( string $rid, \stdClass $state ): void {
+					$this->output_request( $state->lines );
+					echo "[incomplete]\n\n";
+				}
+			);
 
 		// Validate path if provided explicitly.
 		if ( isset( $assoc_args['path'] ) ) {
@@ -393,36 +408,35 @@ class ReqgrepCommand extends WP_CLI_Command {
 			return;
 		}
 
+		// Truncate oversized `m` once, at ingest. Matches RequestBuilder's cap
+		// and keeps per-entry memory bounded regardless of the upstream writer.
+		$line = $this->truncate_line_message( $line, $entry );
+
 		$rid = $entry['rid'];
 		$key = $entry['k'] ?? '';
 
-		if ( isset( $this->requests[ $rid ] ) ) {
-			// Already tracking this request (with line + byte bounds check).
-			$this->append_tracked_line( $rid, $line );
+		$state = $this->inflight->get( $rid );
+		if ( null !== $state ) {
+			// Already tracking this request.
+			$this->append_to_state( $state, $line );
 			if ( 'process (complete)' === $key ) {
 				if ( ! $this->incomplete ) {
-					$this->output_request( $this->requests[ $rid ] );
+					$this->output_request( $state->lines );
 				}
-				unset( $this->requests[ $rid ], $this->timestamps[ $rid ], $this->request_bytes[ $rid ] );
+				$this->inflight->delete( $rid );
 			}
 		} elseif ( $rid === $this->pattern || \preg_match( $this->pattern_regex, $line ) ) {
-			// New matching request.
-			if ( \count( $this->requests ) >= 10000 ) {
-				// Evict oldest to prevent unbounded memory growth.
-				$evict_rid = \array_key_first( $this->requests );
-				unset( $this->requests[ $evict_rid ], $this->timestamps[ $evict_rid ], $this->request_bytes[ $evict_rid ] );
-			}
-			$this->timestamps[ $rid ]    = $this->time;
-			$this->request_bytes[ $rid ] = 0;
+			// New matching request — pull earlier entries from history if present.
+			$state        = new \stdClass();
+			$state->lines = [];
+			$state->bytes = 0;
 
-			// Check history for earlier entries.
+			$found_history = false;
 			foreach ( $this->history as $recent ) {
 				if ( isset( $recent[ $rid ] ) ) {
-					if ( ! isset( $this->requests[ $rid ] ) ) {
-						$this->requests[ $rid ] = [];
-					}
+					$found_history = true;
 					foreach ( $recent[ $rid ] as $hist_line ) {
-						if ( ! $this->append_tracked_line( $rid, $hist_line ) ) {
+						if ( ! $this->append_to_state( $state, $hist_line ) ) {
 							break 2; // Cap hit — stop merging history.
 						}
 					}
@@ -430,18 +444,18 @@ class ReqgrepCommand extends WP_CLI_Command {
 			}
 
 			$n = $entry['n'] ?? 0;
-			if ( ! isset( $this->requests[ $rid ] ) && $n > 1 && \count( $this->history ) >= $this->num_buckets ) {
+			if ( ! $found_history && $n > 1 && \count( $this->history ) >= $this->num_buckets ) {
 				WP_CLI::warning( "Couldn't find request start in history - try increasing --bucket-size or --num-buckets" );
 			}
 
-			if ( ! isset( $this->requests[ $rid ] ) ) {
-				$this->requests[ $rid ] = [];
-			}
-			$this->append_tracked_line( $rid, $line );
+			$this->append_to_state( $state, $line );
+			$this->inflight->set( $rid, $state );
 
-			if ( 'process (complete)' === $key && ! $this->incomplete ) {
-				$this->output_request( $this->requests[ $rid ] );
-				unset( $this->requests[ $rid ], $this->timestamps[ $rid ], $this->request_bytes[ $rid ] );
+			if ( 'process (complete)' === $key ) {
+				if ( ! $this->incomplete ) {
+					$this->output_request( $state->lines );
+				}
+				$this->inflight->delete( $rid );
 			}
 		} else {
 			// Not matching - store in history (with bounds check).
@@ -462,39 +476,50 @@ class ReqgrepCommand extends WP_CLI_Command {
 			}
 		}
 
-		// Periodic cleanup of stale requests (>15 min old).
-		if ( ++$this->line_count > 10000 ) {
-			$this->time = \time();
-			foreach ( $this->timestamps as $rid => $ts ) {
-				if ( $this->time - $ts >= 900 ) {
-					$this->output_request( $this->requests[ $rid ] );
-					echo "[incomplete]\n\n";
-					unset( $this->timestamps[ $rid ], $this->requests[ $rid ], $this->request_bytes[ $rid ] );
-				}
-			}
-			$this->line_count = 0;
-		}
+		// Let the LRU cache evict stale rids on its own schedule — fires the
+		// on_evict callback (which prints [incomplete]) for each rolled-out rid.
+		$this->inflight->rotate_if_due();
 	}
 
 	/**
-	 * Append a line to $this->requests[$rid], respecting line and byte caps.
-	 * Returns true if appended, false if cap hit (caller may want to stop merging).
+	 * Truncate oversized `m` (message) field in a JSON line, matching
+	 * RequestBuilder::MAX_ENTRY_MESSAGE_LENGTH. Returns the (possibly re-encoded)
+	 * line. Cheap: only re-encodes when truncation is needed.
 	 *
-	 * @param string $rid  Request ID.
-	 * @param string $line Raw JSON line.
+	 * @param string $line  Raw JSON line.
+	 * @param array  $entry Already-decoded array (passed by caller to avoid double decode).
+	 * @return string Truncated line, or the original if no truncation needed.
+	 */
+	private function truncate_line_message( string $line, array $entry ): string {
+		if ( ! isset( $entry['m'] ) || ! \is_string( $entry['m'] ) ) {
+			return $line;
+		}
+		if ( \strlen( $entry['m'] ) <= self::MAX_ENTRY_MESSAGE_LENGTH ) {
+			return $line;
+		}
+		$entry['m']     = \substr( $entry['m'], 0, self::MAX_ENTRY_MESSAGE_LENGTH ) . '…';
+		$truncated_line = \wp_json_encode( $entry, JSON_UNESCAPED_SLASHES );
+		return false !== $truncated_line ? $truncated_line : $line;
+	}
+
+	/**
+	 * Append a line to an in-flight request state, respecting line and byte caps.
+	 * Returns true if appended, false if a cap was hit (caller may want to stop).
+	 *
+	 * @param \stdClass $state In-flight state object with ->lines and ->bytes.
+	 * @param string    $line  Raw JSON line (already m-truncated).
 	 * @return bool True if stored, false if dropped due to cap.
 	 */
-	private function append_tracked_line( string $rid, string $line ): bool {
+	private function append_to_state( \stdClass $state, string $line ): bool {
 		$line_bytes = \strlen( $line );
-		$cur_bytes  = $this->request_bytes[ $rid ] ?? 0;
-		if ( $cur_bytes + $line_bytes > self::MAX_BYTES_PER_REQUEST ) {
+		if ( $state->bytes + $line_bytes > self::MAX_BYTES_PER_REQUEST ) {
 			return false;
 		}
-		if ( isset( $this->requests[ $rid ] ) && \count( $this->requests[ $rid ] ) >= self::MAX_LINES_PER_REQUEST ) {
+		if ( \count( $state->lines ) >= self::MAX_LINES_PER_REQUEST ) {
 			return false;
 		}
-		$this->requests[ $rid ][]      = $line;
-		$this->request_bytes[ $rid ]   = $cur_bytes + $line_bytes;
+		$state->lines[] = $line;
+		$state->bytes  += $line_bytes;
 		return true;
 	}
 
@@ -502,8 +527,8 @@ class ReqgrepCommand extends WP_CLI_Command {
 	 * Output remaining incomplete requests.
 	 */
 	private function output_remaining(): void {
-		foreach ( $this->requests as $rid => $lines ) {
-			$this->output_request( $lines );
+		foreach ( $this->inflight->iterate() as $rid => $state ) {
+			$this->output_request( $state->lines );
 			echo "[incomplete]\n\n";
 		}
 	}

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.23] - 2026-04-14
+
+### Fixed
+
+- `wp eventlog reqgrep`: OOM'd despite 2.4.22's byte cap when many simultaneous in-flight rids were held. The flat `$this->requests` array had no upper bound on total cache memory — worst case was (10,000 slot cap × 8MB per rid) = ~80GB. Rewrite the in-flight buffer to use `LruCache(100, 3)` — 300 slots total, tuned to the typical 125 PHP-FPM worker concurrency. Each rid is capped at 1MB after truncating each entry's `m` (message) field to `MAX_ENTRY_MESSAGE_LENGTH = 1024` bytes, mirroring `RequestBuilder`'s per-entry truncation. The LruCache's `on_evict` callback prints any rid that rolls out of the oldest bucket as `[incomplete]`, so data is never silently dropped. Worst-case cache memory is now bounded at 300 × 1MB = 300MB, comfortably under PHP's 512MB limit. Stress test: 2.5M lines across 500 rids each holding 5000 × 4KB entries — stable LRU rotation with no runaway growth.
+
 ## [2.4.22] - 2026-04-14
 
 ### Fixed
