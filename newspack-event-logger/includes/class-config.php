@@ -173,22 +173,52 @@ class Config {
 			}
 		}
 
-		// Only cache after plugins_loaded has fired — otherwise a plugin that
-		// loads later and adds to the option schema (e.g. performance-workers
-		// adding `enable_workers`) will hit a stale cache that was populated
-		// before its filter was registered. Without this guard, disabling
-		// workers in settings has no effect because the cache still reports
-		// the file-default value.
-		$plugins_loaded_done = \function_exists( 'did_action' ) && \did_action( 'plugins_loaded' );
-		if ( $plugins_loaded_done ) {
-			if ( $is_full ) {
-				self::$config_full = $config;
-			} else {
-				self::$config = $config;
-			}
+		// Cache the computed config. Late-loading plugins (alphabetically
+		// later in the plugin load order) may add to the option schema via
+		// the `newspack_event_logger_option_schema_core` filter AFTER this
+		// call, so the main plugin file hooks a one-shot cache reset on
+		// `plugins_loaded` at priority PHP_INT_MIN — see the
+		// `register_cache_invalidation` static initializer below. That
+		// guarantees post-plugins_loaded reads pick up the full schema
+		// without forcing every pre-plugins_loaded caller to re-run the
+		// full filter chain.
+		if ( $is_full ) {
+			self::$config_full = $config;
+		} else {
+			self::$config = $config;
 		}
 
 		return $config;
+	}
+
+	/**
+	 * Invalidate cached config so the next load_config() call rebuilds with
+	 * the complete schema. Called once on plugins_loaded (see register_cache_invalidation).
+	 */
+	public static function invalidate_cache(): void {
+		self::$config                      = null;
+		self::$config_full                 = null;
+		self::$config_defaults             = null;
+		self::$validated_base_directory    = null;
+		self::$validated_logs_directory    = null;
+		self::$validated_locks_directory   = null;
+		self::$validated_offsets_directory = null;
+	}
+
+	/**
+	 * Hook a one-shot cache invalidation on plugins_loaded so that any
+	 * schema additions registered by late-loading plugins are picked up by
+	 * the next load_config() call. Invoked from the plugin main file.
+	 */
+	public static function register_cache_invalidation(): void {
+		static $registered = false;
+		if ( $registered ) {
+			return;
+		}
+		$registered = true;
+		if ( \function_exists( 'add_action' ) ) {
+			\add_action( 'plugins_loaded', [ self::class, 'invalidate_cache' ], PHP_INT_MIN );
+		}
 	}
 
 	/**

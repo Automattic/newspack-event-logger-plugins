@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.27] - 2026-04-14
+
+### Changed
+
+- Config: reverted the 2.4.24 "don't cache until plugins_loaded" gating. The original late-cache approach forced every caller before plugins_loaded to re-run the full schema filter chain, which was both expensive and the root enabler of the 2.4.26 reentry loop. Replaced with eager caching plus a one-shot cache invalidation on `plugins_loaded` (priority `PHP_INT_MIN`), registered from the Event Logger main plugin file via `Config::register_cache_invalidation()`. Late-loading plugins that register schema filters still take effect on the first post-plugins_loaded read — same outcome as 2.4.24, at a fraction of the work. Pre-plugins_loaded `load_config()` invocations drop from 3+ to 1 in a typical request.
+
 ## [2.4.26] - 2026-04-14
 
 ### Fixed
