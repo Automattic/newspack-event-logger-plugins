@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.26] - 2026-04-14
+
+### Fixed
+
+- LogManager / Core: infinite recursion (stack overflow at 512 frames) when any `newspack_event_logger_*` filter name is present in the `log_events` option — something the admin UI's hook picker can easily add by accident because those names show up in WordPress's full filter list. The chain was `Core::hook_start` → `LogManager::start()` → `ensure_started()` → `init_firehose()` → `Config::get_logs_directory()` → `load_config()` → `apply_filters('newspack_event_logger_option_schema_core')` → `Core::hook_start` → … Two independent guards: (1) `ensure_started()` now sets `$this->started = true` **before** calling `init_firehose()` / `log_process()` so any re-entry short-circuits at the top of the method, and (2) `Core::__construct` now skips any `newspack_event_logger_*` / `newspack_performance_logger_*` hook names when registering `hook_start` / `hook_complete`, since instrumenting internal plugin filters is never useful and just opens reentry holes. (`newspack-performance-logger/includes/class-log-manager.php`, `newspack-performance-logger/includes/class-core.php`)
+
 ## [2.4.25] - 2026-04-14
 
 ### Fixed

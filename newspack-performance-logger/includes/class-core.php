@@ -113,6 +113,15 @@ class Core {
 			if ( 'plugin_loaded' === $hook_name ) {
 				continue;
 			}
+			// Skip Event Logger's own internal filters — instrumenting them
+			// creates a re-entry loop via Config::load_config during
+			// LogManager bootstrap. These show up in the "all known hooks"
+			// picker because they're WordPress filters, but they're not
+			// lifecycle events a human would ever want to time.
+			if ( \str_starts_with( $hook_name, 'newspack_event_logger_' )
+				|| \str_starts_with( $hook_name, 'newspack_performance_logger_' ) ) {
+				continue;
+			}
 			\add_filter( $hook_name, [ $this, 'hook_start' ], $this->start_priority );
 			\add_filter( $hook_name, [ $this, 'hook_complete' ], PHP_INT_MAX - 1 );
 		}

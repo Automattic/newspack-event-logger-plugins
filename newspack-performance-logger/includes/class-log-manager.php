@@ -285,10 +285,21 @@ class LogManager {
 			return $this->started ?? false;
 		}
 
+		// Guard against re-entry. init_firehose() calls Config::get_logs_directory()
+		// which calls Config::load_config() which applies the
+		// `newspack_event_logger_option_schema_core` filter. If an admin has
+		// added that (or any other internal Event Logger filter) to log_events
+		// — something the admin UI's "all known filters" selector can easily
+		// do by accident — then Core::hook_start is registered on it, and
+		// apply_filters re-enters ensure_started() → stack overflow. Marking
+		// started true here short-circuits the reentry at the top of this
+		// method; messages that arrive during init_firehose just accumulate in
+		// write_buffer and flush normally once the firehose is set up.
+		$this->started = true;
+
 		\register_shutdown_function( [ $this, 'finish' ] );
 		$this->init_firehose( $this->config );
 		$this->log_process();
-		$this->started = true;
 
 		return true;
 	}
