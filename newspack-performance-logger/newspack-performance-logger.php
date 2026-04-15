@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Newspack Performance Logger
  * Description: Lightweight performance instrumentation and logging. Provides hook timing, request lifecycle logging, and remote management API for multi-server aggregation.
- * Version: 2.4.24
+ * Version: 2.4.25
  * Author: Automattic
  * Author URI: https://newspack.com/
  * License: GPL-2.0-or-later
@@ -39,7 +39,7 @@ if ( ! \class_exists( 'Newspack_Event_Logger\\Firehose' ) ) {
 }
 
 if ( ! \defined( 'NEWSPACK_PERFORMANCE_LOGGER_VERSION' ) ) {
-	\define( 'NEWSPACK_PERFORMANCE_LOGGER_VERSION', '2.4.24' );
+	\define( 'NEWSPACK_PERFORMANCE_LOGGER_VERSION', '2.4.25' );
 }
 
 if ( ! \defined( 'NEWSPACK_PERFORMANCE_LOGGER_FILE' ) ) {

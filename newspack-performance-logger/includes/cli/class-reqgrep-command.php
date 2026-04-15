@@ -270,6 +270,19 @@ class ReqgrepCommand extends WP_CLI_Command {
 	 * @param array $assoc_args Associative arguments.
 	 */
 	public function __invoke( array $args, array $assoc_args ): void {
+		// Drain any PHP output buffers that plugins may have started during
+		// WordPress bootstrap. Without this, echo output gets captured into a
+		// userspace buffer that grows unbounded until PHP OOMs — reqgrep on
+		// a site with many plugins would appear to hang and then die without
+		// printing anything. Cap iterations to avoid spinning on a
+		// non-erasable buffer.
+		$ob_safety = 16;
+		while ( \ob_get_level() > 0 && $ob_safety-- > 0 ) {
+			if ( ! @\ob_end_clean() ) {
+				break; // non-erasable or last attempt failed.
+			}
+		}
+
 		// Parse arguments.
 		$this->pattern       = $args[0] ?? '.';
 		$this->pattern_regex = '/' . \preg_quote( $this->pattern, '/' ) . '/i';

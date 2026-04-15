@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.25] - 2026-04-14
+
+### Fixed
+
+- `wp eventlog reqgrep`: on production sites with many plugins loaded, the command would hang for a long time and then OOM at `output_request`'s `echo $this->format_entry(...)` line without ever printing a single matched request. Root cause: one or more plugins call `ob_start()` during WordPress bootstrap, so every `echo` reqgrep makes gets captured into a userspace buffer that grows unbounded instead of flushing to stdout. `__invoke()` now drains any active output buffers at the top of the command so echoes go straight through. Dev environments with trivial plugin stacks don't reproduce because nothing starts an `ob_*` layer. (`newspack-performance-logger/includes/cli/class-reqgrep-command.php`)
+
 ## [2.4.24] - 2026-04-14
 
 ### Fixed
