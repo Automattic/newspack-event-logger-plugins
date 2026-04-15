@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.28] - 2026-04-14
+
+### Changed
+
+- Admin: the "Select Hooks to Log" modal no longer surfaces Event Logger's own internal plugin filters as checkable options. The 2.4.26 runtime guard already prevents instrumenting them, but the picker still listed a whole "Event Logger" category (pink) full of `newspack_event_logger_*` / `newspack_event_aggregator_*` / `newspack_performance_workers_*` filters that would silently do nothing if checked. Removed the "Event Logger" category from `hook_categories.json` (both its color and its patterns entry) and added a prefix skip-list in `HookCategorizer::get_registered_hooks_by_category()` so those filters are filtered out of the registered-hook list entirely — they don't appear in any category, including "Other". (`newspack-performance-logger/hook_categories.json`, `newspack-performance-logger/includes/class-hook-categorizer.php`)
+
 ## [2.4.27] - 2026-04-14
 
 ### Changed

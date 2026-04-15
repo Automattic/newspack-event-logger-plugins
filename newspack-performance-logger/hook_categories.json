@@ -17,7 +17,6 @@
 		"Divi": "#7C3AED",
 		"Distributor": "#4FC3F7",
 		"Edge Cache": "#00ACC1",
-		"Event Logger": "#E91E63",
 		"Feeds": "#FF7043",
 		"FluentForm": "#4CAF50",
 		"Formidable Forms": "#447799",
@@ -249,11 +248,6 @@
 		"Divi": [ "^divi_", "^et_" ],
 		"Distributor": [ "^dt_" ],
 		"Edge Cache": [ "^edge_cache_" ],
-		"Event Logger": [
-			"^newspack_event_logger_",
-			"^newspack_event_aggregator_",
-			"^newspack_performance_workers_"
-		],
 		"Feeds": [
 			"^do_feed",
 			"^rss_",

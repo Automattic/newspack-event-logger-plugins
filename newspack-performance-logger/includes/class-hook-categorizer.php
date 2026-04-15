@@ -248,8 +248,18 @@ class HookCategorizer {
 			$grouped[ $category ] = [];
 		}
 
-		// Categorize each hook.
+		// Categorize each hook, skipping Event Logger's own internal filters.
+		// Instrumenting them is a no-op at best (Core::hook_start rejects the
+		// prefixes) and used to cause a bootstrap reentry loop, so there's no
+		// reason to surface them in the picker at all.
 		foreach ( $hooks as $hook ) {
+			if ( \str_starts_with( $hook, 'newspack_event_logger_' )
+				|| \str_starts_with( $hook, 'newspack_performance_logger_' )
+				|| \str_starts_with( $hook, 'newspack_event_aggregator_' )
+				|| \str_starts_with( $hook, 'newspack_performance_workers_' )
+				|| \str_starts_with( $hook, 'newspack_performance_aggregator_' ) ) {
+				continue;
+			}
 			$category                = self::categorize( $hook );
 			$grouped[ $category ][] = $hook;
 		}

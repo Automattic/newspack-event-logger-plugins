@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Newspack Performance Gyroscope
  * Description: Real-time in-flight request monitoring. Shows live requests as they execute by streaming firehose.log entries.
- * Version: 2.4.27
+ * Version: 2.4.28
  * Author: Automattic
  * Author URI: https://newspack.com/
  * License: GPL-2.0-or-later
@@ -53,7 +53,7 @@ if ( ! \class_exists( 'Newspack_Performance_Logger\\LogManager' ) ) {
 }
 
 if ( ! \defined( 'PERFORMANCE_GYROSCOPE_VERSION' ) ) {
-	\define( 'PERFORMANCE_GYROSCOPE_VERSION', '2.4.27' );
+	\define( 'PERFORMANCE_GYROSCOPE_VERSION', '2.4.28' );
 }
 
 if ( ! \defined( 'PERFORMANCE_GYROSCOPE_FILE' ) ) {
