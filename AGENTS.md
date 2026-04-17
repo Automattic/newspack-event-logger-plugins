@@ -59,6 +59,8 @@ dndocker/tools/bump-event-logger-version.sh <version>
 git tag v<version>
 git push origin trunk --tags
 gh release create v<version> release/*.zip release/00-newspack-profiler.php --title "v<version>" --notes "changelog here"
+
+# Shortcut: `/release-event-logger <version>` runs steps 2–5 automatically after verifying the CHANGELOG entry exists.
 ```
 
 ## Testing
@@ -141,6 +143,14 @@ These are intentional - do not "fix" them:
 | `class-request-builder.php` | Reconstructs requests from firehose |
 | `class-flame-builder.php` | Generates flame graph data |
 | `class-supervisor.php` | Worker health monitor and spawner |
+
+### Tests (`tests/`)
+
+PHPUnit suite (~1200 tests). Run as `bend` user after deploy:
+
+```bash
+docker exec -u bend eve-pyrobase1-1 bash -c 'cd /usr/src/newspack-event-logger-plugins/tests && phpunit'
+```
 
 ### Aggregation (`newspack-event-aggregator/includes/`)
 
