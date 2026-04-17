@@ -204,7 +204,23 @@ abstract class SSEControllerBase extends \WP_REST_Controller {
 	 */
 	protected function send_sse_event( string $event, $data ): void {
 		// Sanitize event name to prevent SSE injection via newlines/special chars.
-		$event   = \preg_replace( '/[^a-zA-Z0-9_-]/', '', $event );
+		// Hot-path fast path: internal literal event names skip preg_replace entirely.
+		static $safe_events = [
+			'entry'          => 1,
+			'entries'        => 1,
+			'lines'          => 1,
+			'positions'      => 1,
+			'heartbeat'      => 1,
+			'config'         => 1,
+			'connected'      => 1,
+			'timeout'        => 1,
+			'complete_batch' => 1,
+			'inflight'       => 1,
+			'errors'         => 1,
+		];
+		if ( ! isset( $safe_events[ $event ] ) ) {
+			$event = \preg_replace( '/[^a-zA-Z0-9_-]/', '', $event );
+		}
 		$payload = "event: {$event}\ndata: " . \wp_json_encode( $data ) . "\n\n";
 
 		// phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
@@ -494,72 +510,76 @@ abstract class SSEControllerBase extends \WP_REST_Controller {
 		$batch_interval_sec = $digest_interval / 1000.0;
 		$batch              = [];
 
-		while ( $this->should_continue_stream( $context ) ) {
-			$did_work      = false;
-			$all_caught_up = true;
+		try {
+			while ( $this->should_continue_stream( $context ) ) {
+				$did_work      = false;
+				$all_caught_up = true;
 
-			foreach ( $readers as $p => $reader ) {
-				$fh = $file_handles[ $p ];
+				foreach ( $readers as $p => $reader ) {
+					$fh = $file_handles[ $p ];
 
-				if ( $fh ) {
-					$line = \fgets( $fh );
-					$meta = \stream_get_meta_data( $fh );
-					if ( ! empty( $meta['timed_out'] ) ) {
-						continue;
-					}
-					if ( false !== $line ) {
-						$reader->update_offset();
-						$entry = $transform( \trim( $line ), $p );
-						if ( null !== $entry ) {
-							$batch[]  = $entry;
-							$did_work = true;
+					if ( $fh ) {
+						$line = \fgets( $fh );
+						if ( false !== $line ) {
+							$reader->update_offset();
+							$entry = $transform( \trim( $line ), $p );
+							if ( null !== $entry ) {
+								$batch[]  = $entry;
+								$did_work = true;
+							}
+						} else {
+							// fgets returns false on both timeout and EOF; disambiguate via stream metadata.
+							$meta = \stream_get_meta_data( $fh );
+							if ( ! empty( $meta['timed_out'] ) ) {
+								continue;
+							}
+							$reader->mark_eof();
+							$reader->update_offset();
+							$file_handles[ $p ] = $reader->next_segment();
 						}
 					} else {
-						$reader->mark_eof();
-						$reader->update_offset();
-						$file_handles[ $p ] = $reader->next_segment();
+						$file_handles[ $p ] = $reader->open();
+						if ( $file_handles[ $p ] ) {
+							\stream_set_timeout( $file_handles[ $p ], 1 );
+						}
 					}
-				} else {
-					$file_handles[ $p ] = $reader->open();
-					if ( $file_handles[ $p ] ) {
-						\stream_set_timeout( $file_handles[ $p ], 1 );
+
+					if ( $file_handles[ $p ] && ! $reader->is_caught_up() ) {
+						$all_caught_up = false;
 					}
 				}
 
-				if ( $file_handles[ $p ] && ! $reader->is_caught_up() ) {
-					$all_caught_up = false;
+				$now = \microtime( true );
+				if ( ! empty( $batch ) && ( $now - $last_batch >= $batch_interval_sec || \count( $batch ) >= $batch_threshold ) ) {
+					$this->send_sse_event( $event_name, $batch );
+					$positions = [];
+					foreach ( $readers as $rp => $r ) {
+						$rpos              = $r->get_position();
+						$positions[ $rp ] = [ 's' => $rpos['segment_id'], 'o' => $rpos['offset'] ];
+					}
+					$this->send_sse_event( 'positions', $positions );
+					$batch      = [];
+					$last_batch = $now;
 				}
-			}
 
-			$now = \microtime( true );
-			if ( ! empty( $batch ) && ( $now - $last_batch >= $batch_interval_sec || \count( $batch ) >= $batch_threshold ) ) {
-				$this->send_sse_event( $event_name, $batch );
-				$positions = [];
-				foreach ( $readers as $rp => $r ) {
-					$rpos              = $r->get_position();
-					$positions[ $rp ] = [ 's' => $rpos['segment_id'], 'o' => $rpos['offset'] ];
+				if ( $all_caught_up && ! $did_work ) {
+					$hb_now = \time();
+					if ( $hb_now - $last_heartbeat >= self::HEARTBEAT_INTERVAL ) {
+						$this->send_sse_event( 'heartbeat', [ 'ts' => $hb_now ] );
+						$last_heartbeat = $hb_now;
+					}
+					$this->flush_if_needed();
+					\usleep( 10000 );
+				} elseif ( ! $did_work ) {
+					\usleep( 1000 );
 				}
-				$this->send_sse_event( 'positions', $positions );
-				$batch      = [];
-				$last_batch = $now;
 			}
-
-			if ( $all_caught_up && ! $did_work ) {
-				$hb_now = \time();
-				if ( $hb_now - $last_heartbeat >= self::HEARTBEAT_INTERVAL ) {
-					$this->send_sse_event( 'heartbeat', [ 'ts' => $hb_now ] );
-					$last_heartbeat = $hb_now;
-				}
-				$this->flush_if_needed();
-				\usleep( 10000 );
-			} elseif ( ! $did_work ) {
-				\usleep( 1000 );
+		} finally {
+			// Always release reader handles and the SSE slot, even if the loop body throws.
+			foreach ( $readers as $reader ) {
+				$reader->close();
 			}
+			$this->end_sse_stream();
 		}
-
-		foreach ( $readers as $reader ) {
-			$reader->close();
-		}
-		$this->end_sse_stream();
 	}
 }

@@ -351,6 +351,8 @@ class LogManager {
 		// Validate data size to prevent breaking atomicity.
 		$data_json = \wp_json_encode( $data );
 		if ( false !== $data_json && \strlen( $data_json ) > self::MAX_DATA_SIZE ) {
+			// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+			\error_log( \sprintf( 'LogManager: data truncated for category "%s", size=%d (limit=%d). Use JobIntake::queue() for payloads >4KB.', $category, \strlen( $data_json ), self::MAX_DATA_SIZE ) );
 			$data = [ 'truncated' => true ];
 		}
 		$entry = [ 'n' => $this->line_number, 'rid' => $this->request_id, 'k' => $category ] + $data + [ 'ts' => \microtime( true ) ];
@@ -430,7 +432,11 @@ class LogManager {
 		if ( 0 === $this->buffer_size || null === $this->firehose ) {
 			return;
 		}
-		$this->firehose->write_raw( $this->write_buffer );
+		$ok = $this->firehose->write_raw( $this->write_buffer );
+		if ( ! $ok ) {
+			// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+			\error_log( "LogManager: flush_buffer failed to write {$this->buffer_size} bytes to firehose (data lost)" );
+		}
 		$this->write_buffer = '';
 		$this->buffer_size  = 0;
 	}

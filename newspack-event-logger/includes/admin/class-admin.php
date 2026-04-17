@@ -457,10 +457,10 @@ class Admin {
 	public function handle_reset_settings() {
 		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
 		if ( ! isset( $_POST['event_logger_reset_nonce'] ) || ! \wp_verify_nonce( \sanitize_text_field( \wp_unslash( $_POST['event_logger_reset_nonce'] ) ), 'event_logger_reset_settings' ) ) {
-			\wp_die( 'Security check failed' );
+			\wp_die( \esc_html__( 'Security check failed.', 'newspack-event-logger' ) );
 		}
 		if ( ! self::current_user_allowed() ) {
-			\wp_die( 'Unauthorized' );
+			\wp_die( \esc_html__( 'You do not have permission to perform this action.', 'newspack-event-logger' ) );
 		}
 		foreach ( self::$option_names as $option ) {
 			\delete_option( $option );

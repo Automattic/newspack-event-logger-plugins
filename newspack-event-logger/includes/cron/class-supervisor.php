@@ -222,36 +222,7 @@ class Supervisor extends SupervisorBase {
 	 * Worker class must extend WorkerBase and implement run().
 	 */
 	private function load_standalone_workers(): void {
-		$workers = \apply_filters( 'newspack_event_logger_standalone_workers', [] );
-
-		if ( ! \is_array( $workers ) ) {
-			$this->standalone_workers = [];
-			return;
-		}
-
-		// Validate worker configurations.
-		$valid = [];
-		foreach ( $workers as $name => $config ) {
-			if ( ! \is_string( $name ) ) {
-				continue;
-			}
-			if ( ! isset( $config['class'] ) || ! \is_string( $config['class'] ) ) {
-				continue;
-			}
-
-			// Validate worker class exists.
-			$worker_class = $config['class'];
-			if ( ! \class_exists( $worker_class ) ) {
-				continue;
-			}
-
-			$valid[ $name ] = [
-				'class'      => $worker_class,
-				'partitions' => ! empty( $config['partitions'] ),
-			];
-		}
-
-		$this->standalone_workers = $valid;
+		$this->standalone_workers = self::get_standalone_workers();
 	}
 
 	/**
@@ -529,7 +500,7 @@ class Supervisor extends SupervisorBase {
 	 * Spawn the next supervisor instance via the worker spawn endpoint.
 	 */
 	private function spawn_next_supervisor(): void {
-		\wp_remote_post( \rest_url( 'event-logger/v1/workers/spawn' ), [
+		$response = \wp_remote_post( \rest_url( 'event-logger/v1/workers/spawn' ), [
 			'blocking'  => false,
 			'timeout'   => 0.01,
 			'sslverify' => false,
@@ -539,6 +510,12 @@ class Supervisor extends SupervisorBase {
 				'nonce'     => self::generate_spawn_token(),
 			],
 		] );
+		// Fire-and-forget; WP-Cron reschedule is the backstop. Log connection-level errors
+		// so a silently broken respawn chain still shows up in PHP error logs.
+		if ( \is_wp_error( $response ) ) {
+			// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+			\error_log( 'Supervisor: spawn_next_supervisor failed: ' . $response->get_error_message() );
+		}
 	}
 
 	/**

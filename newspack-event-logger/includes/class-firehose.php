@@ -353,6 +353,8 @@ class Firehose {
 		$len = \strlen( $data );
 
 		if ( $this->drop_large_writes && $len > self::MAX_LINE_SIZE ) {
+			// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+			\error_log( "Firehose: Raw write exceeds PIPE_BUF ({$len} > " . self::MAX_LINE_SIZE . "), dropping to preserve atomicity. Log: {$this->partition_dir}" );
 			return false;
 		}
 
@@ -362,17 +364,24 @@ class Firehose {
 
 		$fh = $this->get_handle();
 		if ( ! $fh ) {
+			// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+			\error_log( "Firehose: write_raw failed to open handle for {$this->partition_dir}" );
 			return false;
 		}
 
-		// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fwrite, WordPressVIPMinimum.Functions.RestrictedFunctions.file_ops_fwrite
-		$written = @\fwrite( $fh, $data );
-
-		if ( false === $written ) {
-			return false;
+		// Write all bytes, handling partial writes (parity with write()).
+		$remaining = $data;
+		while ( '' !== $remaining ) {
+			// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fwrite, WordPressVIPMinimum.Functions.RestrictedFunctions.file_ops_fwrite
+			$written = @\fwrite( $fh, $remaining );
+			if ( false === $written || 0 === $written ) {
+				// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+				\error_log( "Firehose: write_raw fwrite failed for {$this->partition_dir} (wrote " . ( \strlen( $data ) - \strlen( $remaining ) ) . "/{$len} bytes)" );
+				return false;
+			}
+			$this->current_size += $written;
+			$remaining = \substr( $remaining, $written );
 		}
-
-		$this->current_size += $written;
 		return true;
 	}
 

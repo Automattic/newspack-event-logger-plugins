@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.29] - 2026-04-17
+
+### Fixed
+
+- Firehose / LogManager: silent data-loss paths. `Firehose::write_raw()` used to return `false` with no `error_log()` when dropping PIPE_BUF-oversize writes or failing to open a segment handle, and `LogManager::flush_buffer()` discarded the return value entirely — so a failed flush silently dropped a whole request's batched JSONL with zero signal. `write_raw()` now logs on every drop path (parity with `write()`), loops on partial `fwrite()` returns (parity with `write()`), and logs bytes written on fwrite failure; `flush_buffer()` now logs when `write_raw()` returns false. (`newspack-event-logger/includes/class-firehose.php`, `newspack-performance-logger/includes/class-log-manager.php`)
+- LogManager: `message()` used to silently replace oversize `$data` payloads with `['truncated' => true]` — a caller passing a job payload larger than `MAX_DATA_SIZE` would see the job dispatched with empty parameters and no indication of why. Now emits an `error_log` noting the category, size, and limit, and steers the caller toward `JobIntake::queue()` for >4KB payloads. (`newspack-performance-logger/includes/class-log-manager.php`)
+- Supervisor: `spawn_next_supervisor()` discarded the `wp_remote_post` return value, so a DNS/connection failure in the respawn chain was silent. WP-Cron is the backstop, but the diagnostic hole meant a flapping respawn was invisible in logs. Now checks `is_wp_error` and logs. (`newspack-event-logger/includes/cron/class-supervisor.php`)
+- SSE: the `stream_log_run` streaming loop in `SSEControllerBase` released the SSE slot only on normal loop exit — if the transform callback threw, the slot leaked until memcached TTL expiry (300s for aggregator connections). The loop body is now wrapped in a `try/finally` that always closes reader handles and releases the slot. (`newspack-event-logger/includes/rest-api/class-sse-controller-base.php`)
+- Admin: `handle_reset_settings()` used two hardcoded English strings (`'Security check failed'`, `'Unauthorized'`) in `wp_die()` calls; every other string in the class was i18n'd. Now wrapped in `esc_html__()` with the `newspack-event-logger` text domain. (`newspack-event-logger/includes/admin/class-admin.php`)
+
+### Changed
+
+- Supervisor: `get_standalone_workers()` and `load_standalone_workers()` duplicated the same `apply_filters` + validation block verbatim. Deduped by having `load_standalone_workers()` delegate to `get_standalone_workers()`. (`newspack-event-logger/includes/cron/class-supervisor.php`)
+- SSE: hot-path micro-optimizations in `SSEControllerBase`. (1) `stream_get_meta_data()` used to run after every successful `fgets()` even though `timed_out` can only be true when `fgets` returns false — moved inside the `false === $line` branch. (2) `send_sse_event()` called `preg_replace()` on every SSE event including per-batch `entries`/`positions`/`heartbeat` events whose names are always string literals — added a static allowlist of the ~11 internal literals so the preg only runs for unknown/caller-supplied event names (injection protection preserved for that path). (`newspack-event-logger/includes/rest-api/class-sse-controller-base.php`)
+
 ## [2.4.28] - 2026-04-14
 
 ### Changed
