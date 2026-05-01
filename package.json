@@ -1,6 +1,6 @@
 {
 	"name": "newspack-event-logger-plugins",
-	"version": "2.4.29",
+	"version": "2.4.30",
 	"private": true,
 	"description": "Unified build for all Event Logger and Performance plugins.",
 	"author": "Automattic",

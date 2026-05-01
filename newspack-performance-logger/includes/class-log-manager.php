@@ -432,11 +432,7 @@ class LogManager {
 		if ( 0 === $this->buffer_size || null === $this->firehose ) {
 			return;
 		}
-		$ok = $this->firehose->write_raw( $this->write_buffer );
-		if ( ! $ok ) {
-			// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
-			\error_log( "LogManager: flush_buffer failed to write {$this->buffer_size} bytes to firehose (data lost)" );
-		}
+		$this->firehose->write_raw( $this->write_buffer );
 		$this->write_buffer = '';
 		$this->buffer_size  = 0;
 	}

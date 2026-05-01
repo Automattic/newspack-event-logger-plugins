@@ -353,8 +353,6 @@ class Firehose {
 		$len = \strlen( $data );
 
 		if ( $this->drop_large_writes && $len > self::MAX_LINE_SIZE ) {
-			// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
-			\error_log( "Firehose: Raw write exceeds PIPE_BUF ({$len} > " . self::MAX_LINE_SIZE . "), dropping to preserve atomicity. Log: {$this->partition_dir}" );
 			return false;
 		}
 
@@ -396,8 +394,6 @@ class Firehose {
 		$len = \strlen( $raw );
 
 		if ( $this->drop_large_writes && $len > self::MAX_LINE_SIZE ) {
-			// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
-			\error_log( "Firehose: Line exceeds PIPE_BUF ({$len} > " . self::MAX_LINE_SIZE . "), dropping to preserve atomicity. Log: {$this->partition_dir}" );
 			return false;
 		}
 

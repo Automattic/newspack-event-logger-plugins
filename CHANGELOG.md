@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.30] - 2026-05-01
+
+### Removed
+
+- Firehose / LogManager: PIPE_BUF-oversize drop logs. The previous `error_log` calls on every dropped write fired without caller context or payload identification, producing per-flush noise without enough signal to act on (and `LogManager::flush_buffer()` duplicated the upstream `Firehose::write_raw()` message verbatim). Removed the `error_log` calls in `Firehose::write_raw()`, `Firehose::write()`, and `LogManager::flush_buffer()`; oversize writes still return `false` and caller behavior is unchanged. Partially reverts the diagnostic addition in 2.4.29. (`newspack-event-logger/includes/class-firehose.php`, `newspack-performance-logger/includes/class-log-manager.php`)
+
 ## [2.4.29] - 2026-04-17
 
 ### Fixed
