@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.36] - 2026-05-05
+
 ### Build
 
 - `build-release.sh` hardened against macOS AppleDouble (`._foo`) leakage. macOS BSD tooling silently emits `._<name>` companion files when archiving into formats that can't preserve `com.apple.provenance` and other xattrs; those sidecars ride along into the plugin zip, extract on Linux, and WP loads them as PHP at runtime — dumping their raw bytes (starting with the literal "Mac OS X" magic) straight to stdout and breaking `wp eval` plus every JSON/REST endpoint. The script now: exports `COPYFILE_DISABLE=1` so BSD tooling stops creating sidecars in the first place; passes `zip -rqX` (was `-rq`) to strip extra file attributes; adds `--exclude='._*'` to the staging rsync; and runs a `find … -delete` sweep on `._*` / `.DS_Store` between rsync and zip as a belt-and-suspenders. (`build-release.sh`)

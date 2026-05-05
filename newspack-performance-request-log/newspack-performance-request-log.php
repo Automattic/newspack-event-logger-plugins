@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Newspack Performance Request Log
  * Description: Completed requests stream viewer. Shows real-time request completion log by streaming requests.log entries.
- * Version: 2.4.35
+ * Version: 2.4.36
  * Author: Automattic
  * Author URI: https://newspack.com/
  * License: GPL-2.0-or-later
@@ -52,7 +52,7 @@ if ( ! \class_exists( 'Newspack_Performance_Workers\\Cron\\RequestBuilder' ) ) {
 }
 
 if ( ! \defined( 'PERFORMANCE_REQUEST_LOG_VERSION' ) ) {
-	\define( 'PERFORMANCE_REQUEST_LOG_VERSION', '2.4.35' );
+	\define( 'PERFORMANCE_REQUEST_LOG_VERSION', '2.4.36' );
 }
 
 if ( ! \defined( 'PERFORMANCE_REQUEST_LOG_DIR' ) ) {
