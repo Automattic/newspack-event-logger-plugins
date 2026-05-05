@@ -411,6 +411,40 @@ class ServerRegistryTest extends TestCase {
 		\putenv( 'LOCAL_EVENT_LOGGER_CONF=' . \dirname( __DIR__ ) . '/event-logger-test-config.php' );
 	}
 
+	public function test_wp_option_server_is_not_a_config_server_when_schema_extended(): void {
+		// Reproduce the production schema registration from newspack-event-aggregator.php:
+		// the plugin filters aggregator_servers into the extended option schema,
+		// which makes Config::load_config('full') merge the WP option into
+		// $config['aggregator_servers']. is_config_server() must read file-only
+		// defaults, otherwise every WP-managed server would look immutable.
+		\add_filter(
+			'newspack_event_logger_option_schema_extended',
+			function ( $schema ) {
+				$schema['aggregator_servers'] = 'aggregator_servers';
+				return $schema;
+			}
+		);
+		Config::reset();
+
+		$this->registry->add( 'wp-only', [
+			'url' => 'https://wp-only.example.com',
+		] );
+
+		$this->assertFalse(
+			$this->registry->is_config_server( 'wp-only' ),
+			'WP-option-only server must not be flagged as a config-file server'
+		);
+		$this->assertTrue(
+			$this->registry->remove( 'wp-only' ),
+			'remove() must succeed for WP-option-only servers'
+		);
+		$this->assertNull( $this->registry->get( 'wp-only' ) );
+
+		// Filter store is global; clear so later tests aren't affected.
+		unset( $GLOBALS['_wp_test_filters']['newspack_event_logger_option_schema_extended'] );
+		Config::reset();
+	}
+
 	// ── get_all() normalization ─────────────────────────────────────────
 
 	public function test_get_all_normalizes_missing_keys(): void {

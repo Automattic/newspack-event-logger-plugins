@@ -143,8 +143,11 @@ class ServerRegistry {
 	 * @return bool True if the server is defined in the config file.
 	 */
 	public function is_config_server( string $id ): bool {
-		$config  = Config::load_config( 'full' );
-		$defaults = $config['aggregator_servers'] ?? [];
+		// Must read file-only defaults — load_config('full') merges the
+		// event_logger_aggregator_servers WP option into aggregator_servers
+		// (registered via newspack_event_logger_option_schema_extended), which
+		// would make every WP-option server look like a config-file server.
+		$defaults = Config::load_config_defaults()['aggregator_servers'] ?? [];
 		return \is_array( $defaults ) && isset( $defaults[ $id ] );
 	}
 
