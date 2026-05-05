@@ -16,6 +16,7 @@
 		"build:request-log": "wp-scripts build newspack-performance-request-log/src/index.js --output-path=newspack-performance-request-log/build/admin",
 		"clean": "rm -rf newspack-event-dashboards/build newspack-performance-dashboards/build newspack-performance-logger/build newspack-performance-gyroscope/build newspack-performance-request-log/build newspack-event-aggregator/build",
 		"composer:all": "for dir in newspack-*/; do echo \"=== $dir ===\"; (cd \"$dir\" && composer install --no-dev --optimize-autoloader); done",
+		"release:archive": "./build-release.sh",
 		"fix:js": "wp-scripts lint-js --fix '*/src/**/*.{js,jsx}'",
 		"fix:php": "phpcbf",
 		"fix:scss": "wp-scripts lint-style '*/src/**/*.scss' --customSyntax postcss-scss --fix",
