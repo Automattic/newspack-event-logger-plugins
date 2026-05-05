@@ -591,6 +591,7 @@ class StreamMerger extends WorkerBase {
 				'body'                => [
 					'slot'       => $slot,
 					'aggregator' => true,
+					'partition'  => $this->partition,
 				],
 				// phpcs:ignore WordPressVIPMinimum.Performance.RemoteRequestTimeout.timeout_timeout -- Cross-server heartbeat needs longer timeout.
 				'timeout'             => 10,

@@ -63,14 +63,21 @@ abstract class SSEControllerBase extends \WP_REST_Controller {
 
 	/**
 	 * Slot TTL for browser connections (seconds).
+	 *
+	 * Browsers heartbeat every 5s (useFirehoseConnection.js), so 10s gives
+	 * 2x headroom — a slot frees within ~5s of a tab closing.
 	 */
 	public const SLOT_TTL_BROWSER = 10;
 
 	/**
 	 * Slot TTL for aggregator connections (seconds).
-	 * Must survive between 15-second HTTP heartbeats.
+	 *
+	 * StreamMerger heartbeats every 15s, so 30s gives the same 2x headroom
+	 * the browser side uses. Larger values create a long stale-slot window
+	 * after worker exits / restart cycles, which exhausts the per-user
+	 * slot pool and trips MAX_SSE_SLOTS rate limiting.
 	 */
-	public const SLOT_TTL_AGGREGATOR = 300;
+	public const SLOT_TTL_AGGREGATOR = 30;
 
 	/**
 	 * Current user ID for slot management.
@@ -92,6 +99,13 @@ abstract class SSEControllerBase extends \WP_REST_Controller {
 	 * @var int|false
 	 */
 	protected $slot = false;
+
+	/**
+	 * Partition the acquired slot is scoped to (-1 for shared / browser pool).
+	 *
+	 * @var int
+	 */
+	protected int $slot_partition = -1;
 
 	/**
 	 * Whether unflushed data may be sitting in buffers.
@@ -131,17 +145,20 @@ abstract class SSEControllerBase extends \WP_REST_Controller {
 	/**
 	 * Acquire an SSE slot for the current user.
 	 *
-	 * @param int $ttl Slot TTL in seconds.
+	 * @param int $ttl       Slot TTL in seconds.
+	 * @param int $partition Partition number (>= 0 scopes the slot to a per-partition pool;
+	 *                       -1 keeps the browser-style shared pool).
 	 * @return int|false Slot number or false if rate limited.
 	 */
-	protected function acquire_sse_slot( int $ttl = self::SLOT_TTL_BROWSER ) {
+	protected function acquire_sse_slot( int $ttl = self::SLOT_TTL_BROWSER, int $partition = -1 ) {
 		$config = Config::load_config();
 		Memcached::init( $config['memcache_servers'] ?? Memcached::DEFAULT_SERVERS );
 
-		$this->user_id = \get_current_user_id();
-		$this->ip_hash = $this->get_ip_hash();
+		$this->user_id        = \get_current_user_id();
+		$this->ip_hash        = $this->get_ip_hash();
+		$this->slot_partition = $partition;
 
-		$this->slot = Memcached::acquire_sse_slot( $this->user_id, $this->ip_hash, static::MAX_SSE_SLOTS, $ttl );
+		$this->slot = Memcached::acquire_sse_slot( $this->user_id, $this->ip_hash, static::MAX_SSE_SLOTS, $ttl, $partition );
 		return $this->slot;
 	}
 
@@ -150,8 +167,9 @@ abstract class SSEControllerBase extends \WP_REST_Controller {
 	 */
 	protected function release_sse_slot(): void {
 		if ( false !== $this->slot ) {
-			Memcached::release_sse_slot( $this->user_id, $this->ip_hash, $this->slot );
-			$this->slot = false;
+			Memcached::release_sse_slot( $this->user_id, $this->ip_hash, $this->slot, $this->slot_partition );
+			$this->slot           = false;
+			$this->slot_partition = -1;
 		}
 	}
 
@@ -164,7 +182,7 @@ abstract class SSEControllerBase extends \WP_REST_Controller {
 		if ( false === $this->slot ) {
 			return false;
 		}
-		$continue = Memcached::check_sse_slot( $this->user_id, $this->ip_hash, $this->slot );
+		$continue = Memcached::check_sse_slot( $this->user_id, $this->ip_hash, $this->slot, $this->slot_partition );
 		return $continue;
 	}
 
@@ -261,8 +279,12 @@ abstract class SSEControllerBase extends \WP_REST_Controller {
 	 * @return array|\WP_Error Stream context array or WP_Error if rate limited.
 	 */
 	protected function start_sse_stream( array $connected_data = [], array $custom_headers = [], bool $is_aggregator = false ) {
-		$ttl  = $is_aggregator ? static::SLOT_TTL_AGGREGATOR : static::SLOT_TTL_BROWSER;
-		$slot = $this->acquire_sse_slot( $ttl );
+		$ttl       = $is_aggregator ? static::SLOT_TTL_AGGREGATOR : static::SLOT_TTL_BROWSER;
+		// Aggregator connections get a per-partition slot pool — one
+		// stream-merger per partition shouldn't compete with browser tabs
+		// or other partitions for the global MAX_SSE_SLOTS pool.
+		$partition = ( $is_aggregator && isset( $connected_data['partition'] ) ) ? (int) $connected_data['partition'] : -1;
+		$slot      = $this->acquire_sse_slot( $ttl, $partition );
 		if ( false === $slot ) {
 			/** Fires when an SSE connection is rate-limited (429). */
 			\do_action( 'newspack_event_logger_sse_rate_limited', \get_current_user_id(), static::class );

@@ -233,12 +233,21 @@ class Memcached {
 	/**
 	 * Build SSE slot key.
 	 *
-	 * @param int    $user_id User ID.
-	 * @param string $ip_hash Hashed IP address.
-	 * @param int    $slot    Slot number.
+	 * Aggregator connections pass a partition >= 0 so each partition gets
+	 * its own slot pool — one stream-merger per partition shouldn't be able
+	 * to crowd browser tabs (or other partitions) out of the global 10-slot
+	 * pool.
+	 *
+	 * @param int    $user_id   User ID.
+	 * @param string $ip_hash   Hashed IP address.
+	 * @param int    $slot      Slot number.
+	 * @param int    $partition Partition number (>= 0 to scope per-partition, -1 for shared pool).
 	 * @return string Cache key.
 	 */
-	private static function sse_slot_key( int $user_id, string $ip_hash, int $slot ): string {
+	private static function sse_slot_key( int $user_id, string $ip_hash, int $slot, int $partition = -1 ): string {
+		if ( $partition >= 0 ) {
+			return "evlog:sse:{$user_id}:{$ip_hash}:p{$partition}:{$slot}";
+		}
 		return "evlog:sse:{$user_id}:{$ip_hash}:{$slot}";
 	}
 
@@ -250,10 +259,11 @@ class Memcached {
 	 * @param int    $user_id   User ID.
 	 * @param string $ip_hash   Hashed IP (use substr(md5($ip), 0, 8)).
 	 * @param int    $max_slots Maximum number of slots.
-	 * @param int    $ttl       Slot TTL in seconds (default 10 for browsers, use 120 for aggregators).
+	 * @param int    $ttl       Slot TTL in seconds (10 for browsers, 30 for aggregators).
+	 * @param int    $partition Partition number (>= 0 to scope per-partition, -1 for shared pool).
 	 * @return int|false Slot number on success, false if all slots taken or no memcache.
 	 */
-	public static function acquire_sse_slot( int $user_id, string $ip_hash, int $max_slots, int $ttl = self::SSE_SLOT_TTL ): int|false {
+	public static function acquire_sse_slot( int $user_id, string $ip_hash, int $max_slots, int $ttl = self::SSE_SLOT_TTL, int $partition = -1 ): int|false {
 		if ( null === self::$memd ) {
 			// No memcache - deny connection (fail closed).
 			return false;
@@ -262,7 +272,7 @@ class Memcached {
 		$connection_id = \wp_generate_uuid4();
 
 		for ( $slot = 0; $slot < $max_slots; $slot++ ) {
-			$key = self::sse_slot_key( $user_id, $ip_hash, $slot );
+			$key = self::sse_slot_key( $user_id, $ip_hash, $slot, $partition );
 			// add() is atomic - only succeeds if key doesn't exist.
 			if ( self::add( $key, $connection_id, $ttl ) ) {
 				return $slot;
@@ -277,17 +287,18 @@ class Memcached {
 	 *
 	 * Called by SSE loop to check if browser is still sending heartbeats.
 	 *
-	 * @param int    $user_id User ID.
-	 * @param string $ip_hash Hashed IP.
-	 * @param int    $slot    Slot number.
+	 * @param int    $user_id   User ID.
+	 * @param string $ip_hash   Hashed IP.
+	 * @param int    $slot      Slot number.
+	 * @param int    $partition Partition number (>= 0 to scope per-partition, -1 for shared pool).
 	 * @return bool True if slot exists.
 	 */
-	public static function check_sse_slot( int $user_id, string $ip_hash, int $slot ): bool {
+	public static function check_sse_slot( int $user_id, string $ip_hash, int $slot, int $partition = -1 ): bool {
 		if ( null === self::$memd ) {
 			return false;  // No memcache - deny (fail closed).
 		}
 
-		$key = self::sse_slot_key( $user_id, $ip_hash, $slot );
+		$key = self::sse_slot_key( $user_id, $ip_hash, $slot, $partition );
 		return null !== self::get( $key );
 	}
 
@@ -296,18 +307,19 @@ class Memcached {
 	 *
 	 * Called by heartbeat endpoint.
 	 *
-	 * @param int    $user_id User ID.
-	 * @param string $ip_hash Hashed IP.
-	 * @param int    $slot    Slot number.
-	 * @param int    $ttl     Slot TTL in seconds (default 10 for browsers, use 120 for aggregators).
+	 * @param int    $user_id   User ID.
+	 * @param string $ip_hash   Hashed IP.
+	 * @param int    $slot      Slot number.
+	 * @param int    $ttl       Slot TTL in seconds (10 for browsers, 30 for aggregators).
+	 * @param int    $partition Partition number (>= 0 to scope per-partition, -1 for shared pool).
 	 * @return bool Success.
 	 */
-	public static function touch_sse_slot( int $user_id, string $ip_hash, int $slot, int $ttl = self::SSE_SLOT_TTL ): bool {
+	public static function touch_sse_slot( int $user_id, string $ip_hash, int $slot, int $ttl = self::SSE_SLOT_TTL, int $partition = -1 ): bool {
 		if ( null === self::$memd ) {
 			return true;
 		}
 
-		$key = self::sse_slot_key( $user_id, $ip_hash, $slot );
+		$key = self::sse_slot_key( $user_id, $ip_hash, $slot, $partition );
 
 		// Memcached extension has native atomic touch().
 		if ( 'memcached' === self::$extension && \method_exists( self::$memd, 'touch' ) ) {
@@ -328,17 +340,18 @@ class Memcached {
 	 *
 	 * Optional - slots auto-expire via TTL.
 	 *
-	 * @param int    $user_id User ID.
-	 * @param string $ip_hash Hashed IP.
-	 * @param int    $slot    Slot number.
+	 * @param int    $user_id   User ID.
+	 * @param string $ip_hash   Hashed IP.
+	 * @param int    $slot      Slot number.
+	 * @param int    $partition Partition number (>= 0 to scope per-partition, -1 for shared pool).
 	 * @return bool Success.
 	 */
-	public static function release_sse_slot( int $user_id, string $ip_hash, int $slot ): bool {
+	public static function release_sse_slot( int $user_id, string $ip_hash, int $slot, int $partition = -1 ): bool {
 		if ( null === self::$memd ) {
 			return true;
 		}
 
-		$key = self::sse_slot_key( $user_id, $ip_hash, $slot );
+		$key = self::sse_slot_key( $user_id, $ip_hash, $slot, $partition );
 		return self::delete( $key );
 	}
 

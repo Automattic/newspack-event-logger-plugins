@@ -72,6 +72,14 @@ class FirehoseController extends \WP_REST_Controller {
 					'default'           => false,
 					'sanitize_callback' => 'rest_sanitize_boolean',
 				],
+				'partition'  => [
+					'required'          => false,
+					'type'              => 'integer',
+					'default'           => -1,
+					'sanitize_callback' => function ( $value ) {
+						return null === $value ? -1 : (int) $value;
+					},
+				],
 			],
 		] );
 	}
@@ -260,9 +268,12 @@ class FirehoseController extends \WP_REST_Controller {
 		$ip_hash    = self::get_ip_hash();
 		$slot       = $request->get_param( 'slot' );
 		$aggregator = $request->get_param( 'aggregator' );
+		$partition  = (int) $request->get_param( 'partition' );
 		$ttl        = $aggregator ? SSEControllerBase::SLOT_TTL_AGGREGATOR : SSEControllerBase::SLOT_TTL_BROWSER;
 
-		$success = Memcached::touch_sse_slot( $user_id, $ip_hash, $slot, $ttl );
+		// Browser heartbeats omit partition (default -1 = shared pool); aggregator
+		// heartbeats include the partition to refresh the right per-partition slot.
+		$success = Memcached::touch_sse_slot( $user_id, $ip_hash, $slot, $ttl, $partition );
 
 		return \rest_ensure_response( [
 			'success'   => $success,

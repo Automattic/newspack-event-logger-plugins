@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.32] - 2026-05-05
+
+### Fixed
+
+- Aggregator: SSE slot TTL / heartbeat asymmetry caused 429 "Maximum concurrent SSE streams reached" rate-limiting on spokes after StreamMerger restarts. The browser side runs 5s heartbeat against a 10s slot TTL (2× headroom — slots free within ~5s of disconnect); the aggregator side ran 15s heartbeat against a **300s** TTL (20× headroom — slots stayed reserved up to ~285s after a worker exited). With `MAX_SSE_SLOTS = 10` per `user_id:ip_hash`, a few rapid restart cycles exhausted the pool. Brought `SLOT_TTL_AGGREGATOR` to 30s (same 2× ratio as browsers) and updated the constant's comment to explain the relationship. (`newspack-event-logger/includes/rest-api/class-sse-controller-base.php`)
+- Aggregator: SSE slots are now scoped per-partition instead of sharing the global `MAX_SSE_SLOTS = 10` pool with browser tabs and other partitions. `Memcached::{acquire,check,touch,release}_sse_slot()` and `sse_slot_key()` accept an optional `int $partition` (default `-1` preserves the browser-style shared pool). `SSEControllerBase::start_sse_stream()` threads the partition from `$connected_data` into the slot acquisition when `is_aggregator=true`, and stores it for matching releases/checks. The `firehose/heartbeat` endpoint accepts a `partition` arg, and `StreamMerger::maybe_send_heartbeat()` includes it in the POST so each partition refreshes its own keyed slot. Added `SSEControllerBaseTest::test_aggregator_slots_are_scoped_per_partition` covering pool-independence and partition-scoped lookup. (`newspack-event-logger/includes/class-memcached.php`, `newspack-event-logger/includes/rest-api/class-sse-controller-base.php`, `newspack-event-logger/includes/rest-api/class-firehose-controller.php`, `newspack-event-aggregator/includes/cron/class-stream-merger.php`, `tests/unit/SSEControllerBaseTest.php`)
+
 ## [2.4.31] - 2026-05-05
 
 ### Fixed

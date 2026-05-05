@@ -64,8 +64,8 @@ class ConcreteSSEController extends SSEControllerBase {
 		return $this->stream_permissions_check();
 	}
 
-	public function public_acquire_sse_slot( int $ttl = self::SLOT_TTL_BROWSER ) {
-		return $this->acquire_sse_slot( $ttl );
+	public function public_acquire_sse_slot( int $ttl = self::SLOT_TTL_BROWSER, int $partition = -1 ) {
+		return $this->acquire_sse_slot( $ttl, $partition );
 	}
 
 	public function public_release_sse_slot(): void {
@@ -625,6 +625,57 @@ class SSEControllerBaseTest extends TestCase {
 		$this->assertFalse( $controller->get_slot() );
 	}
 
+	public function test_aggregator_slots_are_scoped_per_partition(): void {
+		self::reset_memcached_statics();
+		if ( ! $this->init_memcached() ) {
+			$this->markTestSkipped( 'Memcached not available' );
+		}
+
+		$user_id = \get_current_user_id();
+		$ip_hash = \substr( \md5( $_SERVER['REMOTE_ADDR'] ?? 'unknown' ), 0, 8 );
+		$max     = ConcreteSSEController::get_const( 'MAX_SSE_SLOTS' );
+
+		try {
+			// Saturate partition 0's pool.
+			for ( $i = 0; $i < $max; $i++ ) {
+				$this->assertIsInt(
+					Memcached::acquire_sse_slot( $user_id, $ip_hash, $max, 30, 0 ),
+					'Partition 0 should accept the first MAX_SSE_SLOTS'
+				);
+			}
+			$this->assertFalse(
+				Memcached::acquire_sse_slot( $user_id, $ip_hash, $max, 30, 0 ),
+				'Partition 0 should refuse the (max+1)th slot'
+			);
+
+			// Partition 1's pool is independent — must still be wide open.
+			$p1 = Memcached::acquire_sse_slot( $user_id, $ip_hash, $max, 30, 1 );
+			$this->assertIsInt( $p1, 'Partition 1 has its own pool' );
+
+			// And the browser-style shared pool is independent too — saturating
+			// aggregator partitions must not lock browser tabs out.
+			$shared = Memcached::acquire_sse_slot( $user_id, $ip_hash, $max, 30 );
+			$this->assertIsInt( $shared, 'Shared pool independent of per-partition pools' );
+
+			// check_sse_slot must look up under the same partition key — partition 1's
+			// slot is visible in partition 1, and partition 2 (which we never used)
+			// must report empty even if its slot number collides with a populated pool.
+			$this->assertTrue( Memcached::check_sse_slot( $user_id, $ip_hash, $p1, 1 ) );
+			$this->assertFalse(
+				Memcached::check_sse_slot( $user_id, $ip_hash, $p1, 2 ),
+				'check_sse_slot must consult the partition-scoped key, not bleed across pools'
+			);
+		} finally {
+			// Wipe everything we may have acquired so later tests start clean,
+			// even if an assertion fired mid-test.
+			for ( $i = 0; $i < $max; $i++ ) {
+				Memcached::release_sse_slot( $user_id, $ip_hash, $i );
+				Memcached::release_sse_slot( $user_id, $ip_hash, $i, 0 );
+				Memcached::release_sse_slot( $user_id, $ip_hash, $i, 1 );
+			}
+		}
+	}
+
 	public function test_release_sse_slot_noop_when_no_slot(): void {
 		$controller = new ConcreteSSEController();
 		$controller->set_slot( false );
@@ -939,6 +990,6 @@ class SSEControllerBaseTest extends TestCase {
 		$this->assertSame( 5, ConcreteSSEController::get_const( 'HEARTBEAT_INTERVAL' ) );
 		$this->assertSame( 3600, ConcreteSSEController::get_const( 'MAX_RUNTIME' ) );
 		$this->assertSame( 10, SSEControllerBase::SLOT_TTL_BROWSER );
-		$this->assertSame( 300, SSEControllerBase::SLOT_TTL_AGGREGATOR );
+		$this->assertSame( 30, SSEControllerBase::SLOT_TTL_AGGREGATOR );
 	}
 }
