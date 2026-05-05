@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.34] - 2026-05-05
+
+### Fixed
+
+- Jobs / Aggregator: `enable_jobs=false` was silently destructive. JobRouter and JobWorker never registered, but `Firehose::write` continued accumulating `k:"job"` entries from `update_option` fan-out, `supervisor_periodic` health checks, and any plugin using `JobIntake`. Symptom: aggregator settings stop syncing to spokes, FlameBuilder auto-tune writes never apply, and queued jobs sit unread in firehose for hours/weeks until retention deletes them. No errors anywhere — the only visible signal was `wp eventlog worker types` listing firehose-workers without a `job-router` handler. Two guardrails: (1) the admin Enable Jobs field renders a red dependency warning listing each active feature that requires the job pipeline (Aggregator settings sync, Performance Aggregator fan-out, FlameBuilder auto-tune), so toggling jobs off becomes a deliberate choice with surfaced consequences. (2) The aggregator's `supervisor_periodic` callback now checks `enable_jobs` before queueing health-check jobs and emits a rate-limited (1/hour) `error_log` when jobs are off but spokes are configured, so the broken state is loud instead of silent. (`newspack-event-jobs/includes/admin/class-admin.php`, `newspack-event-aggregator/newspack-event-aggregator.php`)
+
 ## [2.4.33] - 2026-05-05
 
 ### Fixed

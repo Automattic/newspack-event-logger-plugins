@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Newspack Performance Dashboards
  * Description: Dashboard visualization for performance data. Provides flame graphs, URL stats, leaderboards, and real-time views.
- * Version: 2.4.33
+ * Version: 2.4.34
  * Author: Automattic
  * Author URI: https://newspack.com/
  * License: GPL-2.0-or-later
@@ -53,7 +53,7 @@ if ( ! \class_exists( 'Newspack_Performance_Workers\\StatsStore' ) ) {
 }
 
 if ( ! \defined( 'NEWSPACK_PERFORMANCE_DASHBOARDS_VERSION' ) ) {
-	\define( 'NEWSPACK_PERFORMANCE_DASHBOARDS_VERSION', '2.4.33' );
+	\define( 'NEWSPACK_PERFORMANCE_DASHBOARDS_VERSION', '2.4.34' );
 }
 
 if ( ! \defined( 'PERFORMANCE_DASHBOARDS_DIR' ) ) {

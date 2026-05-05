@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Newspack Event Aggregator
  * Description: Aggregates logs from remote Event Logger servers via SSE.
- * Version: 2.4.33
+ * Version: 2.4.34
  * Author: Automattic
  * Author URI: https://newspack.com/
  * License: GPL-2.0-or-later
@@ -34,7 +34,7 @@ if ( ! \class_exists( 'Newspack_Event_Logger\\Firehose' ) ) {
 }
 
 if ( ! \defined( 'NEWSPACK_EVENT_AGGREGATOR_VERSION' ) ) {
-	\define( 'NEWSPACK_EVENT_AGGREGATOR_VERSION', '2.4.33' );
+	\define( 'NEWSPACK_EVENT_AGGREGATOR_VERSION', '2.4.34' );
 }
 
 // Define the plugin directory and URL.
@@ -108,6 +108,26 @@ if ( \is_admin() ) {
 		// Only check if we have enabled servers.
 		$servers = Newspack_Event_Aggregator\ServerRegistry::get_instance()->get_enabled();
 		if ( empty( $servers ) ) {
+			return;
+		}
+
+		// Aggregator depends on the job pipeline (firehose → JobRouter → JobWorker
+		// → RemoteManager). If enable_jobs is off, queueing the health_check is
+		// pointless: jobs.log isn't being routed and STALE_THRESHOLD will drop
+		// every entry. Surface this loudly — it's silently destructive otherwise.
+		$config = \Newspack_Event_Logger\Config::load_config();
+		if ( false === ( $config['enable_jobs'] ?? true ) ) {
+			static $last_warn = 0;
+			if ( $now - $last_warn >= 3600 ) {
+				$last_warn = $now;
+				// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+				\error_log(
+					\sprintf(
+						'[EventAggregator] enable_jobs is OFF but %d aggregator server(s) are configured. Settings sync, health checks, and remote fan-out are offline. Re-enable Jobs in Event Logger Settings to restore.',
+						\count( $servers )
+					)
+				);
+			}
 			return;
 		}
 
