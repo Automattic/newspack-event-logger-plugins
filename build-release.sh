@@ -11,6 +11,12 @@
 
 set -euo pipefail
 
+# Stop macOS BSD tooling from emitting AppleDouble (._foo) sidecars when it
+# can't preserve xattrs in the destination format. Without this, .zip and .tgz
+# artifacts ship with ._<name>.php files that WordPress dutifully includes
+# alongside the real plugin code, dumping AppleDouble bytes to stdout.
+export COPYFILE_DISABLE=1
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 RELEASE_DIR="${SCRIPT_DIR}/release"
 STAGING_DIR="${SCRIPT_DIR}/.release-staging"
@@ -55,6 +61,8 @@ for dir in "${SCRIPT_DIR}"/newspack-*/; do
 	mkdir -p "${STAGING_DIR}/${plugin}"
 
 	# Copy plugin files, excluding dev artifacts.
+	# '._*' catches any AppleDouble companion files left over from macOS
+	# tooling — letting them through means WP loads them as PHP at runtime.
 	rsync -a \
 		--exclude='src' \
 		--exclude='composer.json' \
@@ -62,12 +70,17 @@ for dir in "${SCRIPT_DIR}"/newspack-*/; do
 		--exclude='phpcs.xml.dist' \
 		--exclude='.gitkeep' \
 		--exclude='.DS_Store' \
+		--exclude='._*' \
 		--exclude='node_modules' \
 		--exclude='*.log' \
 		"${dir}" "${STAGING_DIR}/${plugin}/"
 
+	# Belt-and-suspenders: scrub anything the rsync excludes might've missed.
+	find "${STAGING_DIR}/${plugin}" \( -name '._*' -o -name '.DS_Store' \) -delete
+
 	# Create zip with plugin dir at root (required for wp plugin install).
-	(cd "${STAGING_DIR}" && zip -rq "${RELEASE_DIR}/${plugin}.zip" "${plugin}")
+	# -X strips extra file attributes; -x patterns block AppleDouble re-entry.
+	(cd "${STAGING_DIR}" && zip -rqX "${RELEASE_DIR}/${plugin}.zip" "${plugin}" --exclude '*/._*' --exclude '*/.DS_Store')
 
 	# Clean staging.
 	rm -rf "${STAGING_DIR}/${plugin}"
