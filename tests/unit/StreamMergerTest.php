@@ -48,7 +48,7 @@ class StreamMergerTest extends TestCase {
 		$reg_ref = new \ReflectionProperty( \Newspack_Event_Aggregator\ServerRegistry::class, 'instance' );
 		$reg_ref->setAccessible( true );
 		$reg_ref->setValue( null, null );
-		unset( $GLOBALS['_wp_test_options'] );
+		$GLOBALS['_wp_test_options'] = [];
 
 		\putenv( 'LOCAL_EVENT_LOGGER_CONF=' . \dirname( __DIR__ ) . '/event-logger-test-config.php' );
 		parent::tearDown();

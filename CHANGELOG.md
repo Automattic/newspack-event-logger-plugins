@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Tests: flaky `SupervisorBaseTest` failures (5 errors with `array_key_exists(): Argument #2 ($array) must be of type array, null given`). `StreamMergerTest::tearDown()` was calling `unset( $GLOBALS['_wp_test_options'] )` on the entire global instead of resetting it to `[]`; tests that ran after it (alphabetically `SupervisorBaseTest`) hit a null global when the bootstrap `get_option()` stub called `array_key_exists()`. The flakiness came from `phpunit.xml`'s `executionOrder="depends,defects"` — once a test failed, PHPUnit cached defect ordering and ran the previously-failing test first on subsequent runs, masking the bug. Now resets to `[]`. (`tests/unit/StreamMergerTest.php`)
+- Tests: risky-test warnings in `ReqgrepCommandTest::test_invoke_rejects_invalid_path` and `test_invoke_path_must_be_within_logs_dir` ("Test code or tested code closed output buffers other than its own"). `ReqgrepCommand::__invoke()` intentionally drains all output buffers at startup to prevent WP-CLI plugin output buffering from OOMing reqgrep on plugin-heavy sites — but in unit tests, that closes PHPUnit's own buffer. Tests now snapshot `ob_get_level()` before invoking and restart buffers in `finally` to restore the level after the expected exception propagates. (`tests/unit/ReqgrepCommandTest.php`)
+
 ## [2.4.30] - 2026-05-01
 
 ### Removed

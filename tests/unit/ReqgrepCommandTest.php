@@ -591,7 +591,16 @@ class ReqgrepCommandTest extends TestCase {
 		$this->expectException( \RuntimeException::class );
 		$this->expectExceptionMessage( 'Invalid path' );
 
-		$cmd( [ 'test' ], [ 'path' => '/nonexistent/path/that/does/not/exist' ] );
+		// __invoke drains all output buffers (intentional, see class doc).
+		// Restore PHPUnit's buffer level after the exception propagates.
+		$buffer_level = \ob_get_level();
+		try {
+			$cmd( [ 'test' ], [ 'path' => '/nonexistent/path/that/does/not/exist' ] );
+		} finally {
+			while ( \ob_get_level() < $buffer_level ) {
+				\ob_start();
+			}
+		}
 	}
 
 	// ── process_line: stale request cleanup ─────────────────────────────
@@ -761,10 +770,16 @@ class ReqgrepCommandTest extends TestCase {
 		$this->expectException( \RuntimeException::class );
 		$this->expectExceptionMessage( 'Path must be within the logs directory' );
 
+		// __invoke drains all output buffers (intentional, see class doc).
+		// Restore PHPUnit's buffer level after the exception propagates.
+		$buffer_level = \ob_get_level();
 		try {
 			$cmd( [ 'test' ], [ 'path' => $outside_dir ] );
 		} finally {
 			@\rmdir( $outside_dir );
+			while ( \ob_get_level() < $buffer_level ) {
+				\ob_start();
+			}
 		}
 	}
 }
