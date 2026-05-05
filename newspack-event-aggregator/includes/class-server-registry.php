@@ -191,15 +191,18 @@ class ServerRegistry {
 		$wp_servers        = $this->get_wp_servers();
 		$wp_servers[ $id ] = $validated;
 
-		$result = \update_option( self::OPTION_NAME, $wp_servers, false );
+		// update_option() returns false on both failure and no-op — verify by re-read.
+		\update_option( self::OPTION_NAME, $wp_servers, false );
 		$this->servers = null; // Force reload to re-merge.
 
-		if ( $result ) {
-			// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
-			\error_log( \sprintf( '[EventLogger] Server %s: %s (user=%d)', 'added', $id, \get_current_user_id() ) );
+		$verify = $this->get_wp_servers();
+		if ( ! isset( $verify[ $id ] ) ) {
+			return false;
 		}
 
-		return $result;
+		// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+		\error_log( \sprintf( '[EventLogger] Server %s: %s (user=%d)', 'added', $id, \get_current_user_id() ) );
+		return true;
 	}
 
 	/**
@@ -241,15 +244,18 @@ class ServerRegistry {
 		$wp_servers        = $this->get_wp_servers();
 		$wp_servers[ $id ] = $validated;
 
-		$result = \update_option( self::OPTION_NAME, $wp_servers, false );
+		// update_option() returns false on both failure and no-op — verify by re-read.
+		\update_option( self::OPTION_NAME, $wp_servers, false );
 		$this->servers = null; // Force reload to re-merge.
 
-		if ( $result ) {
-			// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
-			\error_log( \sprintf( '[EventLogger] Server %s: %s (user=%d)', 'updated', $id, \get_current_user_id() ) );
+		$verify = $this->get_wp_servers();
+		if ( ! isset( $verify[ $id ] ) ) {
+			return false;
 		}
 
-		return $result;
+		// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+		\error_log( \sprintf( '[EventLogger] Server %s: %s (user=%d)', 'updated', $id, \get_current_user_id() ) );
+		return true;
 	}
 
 	/**
@@ -279,15 +285,20 @@ class ServerRegistry {
 		$wp_servers = $this->get_wp_servers();
 		unset( $wp_servers[ $id ] );
 
-		$result = \update_option( self::OPTION_NAME, $wp_servers, false );
+		// update_option() returns false on both genuine failure AND no-op (when
+		// the new value equals the old). Don't trust the return — verify the
+		// post-condition by re-reading the option.
+		\update_option( self::OPTION_NAME, $wp_servers, false );
 		$this->servers = null; // Force reload to re-merge.
 
-		if ( $result ) {
-			// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
-			\error_log( \sprintf( '[EventLogger] Server %s: %s (user=%d)', 'removed', $id, \get_current_user_id() ) );
+		$verify = $this->get_wp_servers();
+		if ( isset( $verify[ $id ] ) ) {
+			return false;
 		}
 
-		return $result;
+		// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+		\error_log( \sprintf( '[EventLogger] Server %s: %s (user=%d)', 'removed', $id, \get_current_user_id() ) );
+		return true;
 	}
 
 	/**

@@ -171,13 +171,20 @@ if ( ! function_exists( 'get_option' ) ) {
 
 if ( ! function_exists( 'update_option' ) ) {
 	/**
-	 * Stub: update_option — writes to in-memory store.
+	 * Stub: update_option — writes to in-memory store. Mirrors WordPress's
+	 * behavior of returning false when the new value equals the stored value
+	 * (no-op), so callers that incorrectly treat that as failure get caught
+	 * by tests instead of leaking into production.
 	 *
 	 * @param string $option Option name.
 	 * @param mixed  $value  Option value.
 	 * @return bool
 	 */
 	function update_option( $option, $value ) {
+		if ( array_key_exists( $option, $GLOBALS['_wp_test_options'] )
+			&& serialize( $GLOBALS['_wp_test_options'][ $option ] ) === serialize( $value ) ) {
+			return false;
+		}
 		$GLOBALS['_wp_test_options'][ $option ] = $value;
 		return true;
 	}

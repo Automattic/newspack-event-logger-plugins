@@ -238,6 +238,68 @@ class ServerRegistryTest extends TestCase {
 		$this->assertFalse( $result );
 	}
 
+	/**
+	 * Regression: update_option() returns false on no-op (when the new value
+	 * equals the stored value), not just on failure. If the in-memory cached
+	 * view of servers includes an entry that the WP option doesn't actually
+	 * contain (e.g., concurrent edit, stale object cache), unset() leaves the
+	 * option unchanged — the pre-fix code mistook update_option's `false`
+	 * return for failure and reported "Failed to delete server" even though
+	 * the desired state was already achieved.
+	 */
+	public function test_remove_succeeds_when_update_option_is_noop(): void {
+		// Pre-seed the cached view with an entry, but leave the WP option
+		// with that entry already absent — so unset() produces the same
+		// array that's already stored, and update_option returns false.
+		$GLOBALS['_wp_test_options']['event_logger_aggregator_servers'] = [
+			'keep' => [
+				'url'           => 'https://keep.example.com',
+				'auth_username' => '',
+				'auth_password' => '',
+				'enabled'       => true,
+				'logs'          => [ 'firehose.log' ],
+			],
+		];
+
+		$cached = new \ReflectionProperty( $this->registry, 'servers' );
+		$cached->setAccessible( true );
+		$cached->setValue( $this->registry, [
+			'keep'  => $GLOBALS['_wp_test_options']['event_logger_aggregator_servers']['keep'],
+			'ghost' => [
+				'url'           => 'https://ghost.example.com',
+				'auth_username' => '',
+				'auth_password' => '',
+				'enabled'       => true,
+				'logs'          => [ 'firehose.log' ],
+			],
+		] );
+
+		$result = $this->registry->remove( 'ghost' );
+
+		$this->assertTrue( $result, 'remove() should succeed when desired state already holds' );
+		$this->assertNull( $this->registry->get( 'ghost' ) );
+	}
+
+	/**
+	 * Regression: update() must succeed when the user re-saves the same
+	 * config (no actual change). Pre-fix, update_option returned false on
+	 * the no-op and update() propagated that as "save failed".
+	 */
+	public function test_update_succeeds_when_config_unchanged(): void {
+		$this->registry->add( 'stable', [
+			'url'     => 'https://stable.example.com',
+			'enabled' => true,
+		] );
+
+		// Re-save with identical config — update_option will return false.
+		$result = $this->registry->update( 'stable', [
+			'url'     => 'https://stable.example.com',
+			'enabled' => true,
+		] );
+
+		$this->assertTrue( $result, 'update() should succeed when re-saving identical config' );
+	}
+
 	// ── get_enabled() ───────────────────────────────────────────────────────
 
 	public function test_get_enabled_filters_disabled(): void {
