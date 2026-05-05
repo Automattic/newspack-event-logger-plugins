@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.37] - 2026-05-05
+
+### Fixed
+
+- WorkerBase: exit gracefully before hitting `memory_limit` instead of fatalling. The image-migration handler (JobWorker → ImageMigration → `wp_generate_attachment_metadata` → `WP_Image_Editor_GD`) loads full-resolution images into GD as `width × height × 4` bytes, and across many jobs PHP's reference-counted GC accumulates residue from circular refs that WordPress's filter/hook graph leaves behind. On a 512 MB CLI limit the worker would die mid-job with `Allowed memory size of 536870912 bytes exhausted` — and PHP fatals bypass `finally`, so `self_respawn()` never fires and the supervisor only re-spawns on its next periodic cycle (with the lock released by the shutdown handler). `WorkerBase::should_restart()` now checks resident memory against an 80% watermark of the parsed `memory_limit` and returns true so the worker exits cleanly between jobs (offsetlog flushed, `self_respawn()` fires, fresh process inherits the offset). Memory limit parsing handles `M` / `K` / `G` suffixes; `-1` (unlimited) skips the check. (`newspack-event-logger/includes/class-worker-base.php`)
+- JobWorker: call `gc_collect_cycles()` after each dispatched job. PHP's refcounted GC can't break cycles immediately, so circular refs left behind by image handlers accumulate until the watermark above forces a respawn. Forcing a cycle here delays the watermark trigger and cuts respawn frequency. (`newspack-event-jobs/includes/cron/class-job-worker.php`)
+
+### Tests
+
+- WorkerBaseTest: added `test_should_restart_true_when_memory_above_watermark` and `test_should_restart_skips_memory_check_when_unlimited` covering the new memory watermark logic. Reflection is used to seed the cached `memory_limit_bytes` since the watermark is parsed once and cached per-process.
+
 ## [2.4.36] - 2026-05-05
 
 ### Build

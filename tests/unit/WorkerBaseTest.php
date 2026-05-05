@@ -218,6 +218,48 @@ class WorkerBaseTest extends TestCase {
 		$worker->release();
 	}
 
+	public function test_should_restart_true_when_memory_above_watermark(): void {
+		$lock_path = $this->make_lock_path( 'memwm' );
+		$worker    = new ConcreteTestWorker();
+		$worker->setup_worker( $lock_path );
+		$worker->acquire();
+
+		// Force the cached memory limit to a value below current usage so the
+		// watermark check trips. memory_get_usage(true) is at least a few MB
+		// in the test runner — setting the cached limit to 1 MB guarantees
+		// (1 MB * 0.80) is below current usage.
+		$cache = new \ReflectionProperty( WorkerBase::class, 'memory_limit_bytes' );
+		$cache->setAccessible( true );
+		$original = $cache->getValue();
+		$cache->setValue( null, 1048576 ); // 1 MB.
+
+		try {
+			$this->assertTrue( $worker->public_should_restart() );
+		} finally {
+			$cache->setValue( null, $original );
+			$worker->release();
+		}
+	}
+
+	public function test_should_restart_skips_memory_check_when_unlimited(): void {
+		$lock_path = $this->make_lock_path( 'memwm-unlim' );
+		$worker    = new ConcreteTestWorker();
+		$worker->setup_worker( $lock_path, 0, 600 );
+		$worker->acquire();
+
+		$cache = new \ReflectionProperty( WorkerBase::class, 'memory_limit_bytes' );
+		$cache->setAccessible( true );
+		$original = $cache->getValue();
+		$cache->setValue( null, -1 ); // Unlimited.
+
+		try {
+			$this->assertFalse( $worker->public_should_restart() );
+		} finally {
+			$cache->setValue( null, $original );
+			$worker->release();
+		}
+	}
+
 	public function test_execute_calls_run_and_releases_lock(): void {
 		$lock_path = $this->make_lock_path( 'execute' );
 		$worker    = new ConcreteTestWorker();

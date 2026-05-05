@@ -172,6 +172,14 @@ class JobWorker {
 
 		self::dispatch_job( $job, $context );
 
+		// Force a GC cycle after each job. PHP's reference-counted GC can't
+		// break cycles immediately, and image handlers (wp_generate_attachment_metadata
+		// → WP_Image_Editor_GD) leave circular refs behind that otherwise
+		// accumulate until WorkerBase's memory watermark forces a respawn.
+		// Running gc_collect_cycles() here delays that trigger so each
+		// process churns through more jobs before being recycled.
+		\gc_collect_cycles();
+
 		++$context['jobs_since_cache_flush'];
 
 		// Flush object cache periodically to prevent memory growth from handler queries.

@@ -32,6 +32,16 @@ abstract class WorkerBase {
 	const DB_CHECK_INTERVAL_S      = 30;
 	const DB_CHECK_MAX_FAILURES    = 3;
 
+	// Exit gracefully when resident memory crosses this fraction of the PHP
+	// memory_limit so the supervisor can respawn us on a clean process before
+	// a job pushes us over the cliff. PHP fatal-on-OOM is uncatchable; the
+	// finally block (and self_respawn) do not run, so the only safe path is
+	// to never get there in the first place.
+	const MEMORY_HIGH_WATERMARK_PCT = 0.80;
+
+	/** @var int Cached parsed memory_limit in bytes (-1 = unlimited, 0 = unparsed). */
+	private static int $memory_limit_bytes = 0;
+
 	/**
 	 * Run the worker. Implemented by subclasses.
 	 *
@@ -204,6 +214,28 @@ abstract class WorkerBase {
 			return true;
 		}
 
+		// Memory watermark: bail before we OOM mid-job. wp_generate_attachment_metadata
+		// (image migration handler) loads full-resolution images into GD as
+		// width × height × 4 bytes, and across many jobs PHP's GC accumulates
+		// residue. Hitting memory_limit is a fatal that bypasses finally —
+		// no self_respawn, no clean offsetlog flush — so we want to land
+		// here long before that.
+		$mem_limit = self::memory_limit_bytes();
+		if ( $mem_limit > 0 ) {
+			$used = \memory_get_usage( true );
+			if ( $used >= $mem_limit * self::MEMORY_HIGH_WATERMARK_PCT ) {
+				// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+				\error_log( \sprintf(
+					'[EventLogger] %s worker p%d: memory watermark reached (%.0fM / %.0fM), exiting gracefully',
+					static::class,
+					$this->partition,
+					$used / 1048576,
+					$mem_limit / 1048576
+				) );
+				return true;
+			}
+		}
+
 		// Fast check: lock still ours / restart requested? Every 250ms.
 		if ( $now - $this->last_lock_check >= self::LOCK_CHECK_INTERVAL_S ) {
 			$this->last_lock_check = $now;
@@ -239,6 +271,34 @@ abstract class WorkerBase {
 		}
 
 		return false;
+	}
+
+	/**
+	 * Parsed PHP memory_limit in bytes.
+	 *
+	 * Cached per-process. Returns:
+	 * - positive int: byte count for a finite limit
+	 * - -1: unlimited (memory_limit = -1)
+	 * - 0: could not parse (treat as no watermark)
+	 */
+	private static function memory_limit_bytes(): int {
+		if ( 0 !== self::$memory_limit_bytes ) {
+			return self::$memory_limit_bytes;
+		}
+		$raw = (string) \ini_get( 'memory_limit' );
+		if ( '-1' === $raw || '' === $raw ) {
+			self::$memory_limit_bytes = -1;
+			return self::$memory_limit_bytes;
+		}
+		$num    = (int) $raw;
+		$suffix = \strtolower( \substr( $raw, -1 ) );
+		self::$memory_limit_bytes = match ( $suffix ) {
+			'g'     => $num * 1024 * 1024 * 1024,
+			'm'     => $num * 1024 * 1024,
+			'k'     => $num * 1024,
+			default => $num, // numeric-only ini value is bytes.
+		};
+		return self::$memory_limit_bytes;
 	}
 
 	/**

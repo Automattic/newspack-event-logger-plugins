@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Newspack Event Logger
  * Description: Logs WordPress request lifecycle, plugin load times, and query performance in JSONL format.
- * Version: 2.4.36
+ * Version: 2.4.37
  * Author: Automattic
  * Author URI: https://newspack.com/
  * License: GPL-2.0-or-later
@@ -16,7 +16,7 @@
 \defined( 'ABSPATH' ) || exit;
 
 if ( ! \defined( 'NEWSPACK_EVENT_LOGGER_VERSION' ) ) {
-	\define( 'NEWSPACK_EVENT_LOGGER_VERSION', '2.4.36' );
+	\define( 'NEWSPACK_EVENT_LOGGER_VERSION', '2.4.37' );
 }
 
 // Define NEWSPACK_EVENT_LOGGER_FILE.
