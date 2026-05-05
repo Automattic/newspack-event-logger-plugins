@@ -222,6 +222,11 @@ class RemoteManager {
 	 */
 	public static function health_check(): void {
 		$registry = ServerRegistry::get_instance();
+		// Long-running JobWorker processes keep this singleton alive across
+		// many job dispatches; reset so the post-add sync (and periodic ticks)
+		// see freshly-added or re-enabled spokes without waiting for the
+		// worker to hit max_runtime and respawn.
+		$registry->reset_cache();
 		$servers  = $registry->get_enabled();
 
 		// Collect discovery data from all servers.
@@ -257,13 +262,19 @@ class RemoteManager {
 	}
 
 	/**
-	 * Sync all registered settings to all servers.
+	 * Sync all registered settings to all servers (or a targeted subset).
 	 *
 	 * Uses the 'newspack_event_aggregator_synced_settings' filter to collect
 	 * settings from all SettingsSync classes (event-aggregator and
 	 * performance-aggregator).
+	 *
+	 * @param array|null $server_ids Optional list of server IDs to sync to (null = all enabled).
 	 */
-	public static function sync_all_settings(): void {
+	public static function sync_all_settings( ?array $server_ids = null ): void {
+		// Long-running workers (JobWorker, supervisor) cache the registry singleton
+		// across many job dispatches; reset so newly-added or re-enabled spokes are
+		// visible without waiting for max_runtime respawn.
+		ServerRegistry::get_instance()->reset_cache();
 		/**
 		 * Filter to collect all settings that should be synced.
 		 *
@@ -306,7 +317,7 @@ class RemoteManager {
 				continue; // Option not in config.
 			}
 
-			self::sync_setting( $remote_option, $config[ $config_key ], $endpoint );
+			self::sync_setting( $remote_option, $config[ $config_key ], $endpoint, $server_ids );
 		}
 	}
 

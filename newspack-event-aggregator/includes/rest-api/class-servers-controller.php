@@ -9,6 +9,7 @@
 
 namespace Newspack_Event_Aggregator\REST;
 
+use Newspack_Event_Aggregator\RemoteManager;
 use Newspack_Event_Aggregator\ServerRegistry;
 use Newspack_Event_Logger\Admin\Admin as EventLoggerAdmin;
 use Newspack_Event_Logger\Config;
@@ -217,6 +218,15 @@ class ServersController extends \WP_REST_Controller {
 			\Newspack_Event_Logger\Cron\Supervisor::request_restart();
 		}
 
+		// Push current settings to the new spoke immediately. Without this the
+		// new server only gets settings on the next 5-minute periodic tick AND
+		// only if a JobWorker happens to be cycling — worst case ~15 minutes
+		// of split-brain config. Sync runs only against the new server so we
+		// don't fan out to existing spokes for a no-op.
+		if ( ! empty( $config['enabled'] ) && \class_exists( '\\Newspack_Event_Aggregator\\RemoteManager' ) ) {
+			RemoteManager::sync_all_settings( [ $id ] );
+		}
+
 		return new \WP_REST_Response(
 			[
 				'id'      => $id,
@@ -236,13 +246,16 @@ class ServersController extends \WP_REST_Controller {
 		$id       = $request->get_param( 'id' );
 		$registry = ServerRegistry::get_instance();
 
-		if ( null === $registry->get( $id ) ) {
+		$existing = $registry->get( $id );
+		if ( null === $existing ) {
 			return new \WP_Error(
 				'not_found',
 				\__( 'Server not found.', 'newspack-event-aggregator' ),
 				[ 'status' => 404 ]
 			);
 		}
+
+		$was_enabled = ! empty( $existing['enabled'] );
 
 		$config = [];
 
@@ -274,6 +287,13 @@ class ServersController extends \WP_REST_Controller {
 		// Request supervisor restart to pick up config changes.
 		if ( \class_exists( 'Newspack_Event_Logger\Cron\Supervisor' ) ) {
 			\Newspack_Event_Logger\Cron\Supervisor::request_restart();
+		}
+
+		// Push current settings if this update brought the spoke from disabled
+		// (or never-synced) into the enabled set — same reasoning as create_item.
+		$now_enabled = ! empty( $registry->get( $id )['enabled'] ?? false );
+		if ( $now_enabled && ! $was_enabled && \class_exists( '\\Newspack_Event_Aggregator\\RemoteManager' ) ) {
+			RemoteManager::sync_all_settings( [ $id ] );
 		}
 
 		return new \WP_REST_Response(

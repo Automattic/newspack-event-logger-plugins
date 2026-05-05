@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.33] - 2026-05-05
+
+### Fixed
+
+- Aggregator: settings sync to a freshly-added (or re-enabled) spoke could lag by up to ~15 minutes. Two compounding bugs: (1) `ServerRegistry` is a process-lifetime singleton that caches `$this->servers` on first read; long-running JobWorker processes (which dispatch the periodic `health_check` job that runs `sync_all_settings`) kept a stale view of the server list until they hit `MAX_RUNTIME_SECONDS = 595` and respawned, so a new spoke was invisible to in-flight workers. (2) Nothing in `ServersController::create_item()` triggered a sync — the new spoke depended entirely on the next 300-second supervisor periodic tick *and* a JobWorker with a fresh cache aligning. Fix: `RemoteManager::health_check()` and `sync_all_settings()` now call `ServerRegistry::reset_cache()` at the top so each dispatch starts from current data; `sync_all_settings()` accepts an optional `?array $server_ids` for targeted pushes; `create_item()` and the false→true `enabled` transition in `update_item()` synchronously call `RemoteManager::sync_all_settings( [ $id ] )` so user-initiated server changes don't depend on the periodic chain. (`newspack-event-aggregator/includes/class-remote-manager.php`, `newspack-event-aggregator/includes/rest-api/class-servers-controller.php`)
+
 ## [2.4.32] - 2026-05-05
 
 ### Fixed
