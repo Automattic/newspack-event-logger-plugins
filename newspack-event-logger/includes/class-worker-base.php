@@ -109,17 +109,10 @@ abstract class WorkerBase {
 	 */
 	public static function handle_shutdown( Lock $lock, int $partition, string $worker_class ): void {
 		$error = \error_get_last();
-		if ( $error && \in_array( $error['type'], [ E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR ], true ) ) {
-			// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
-			\error_log( \sprintf(
-				'[EventLogger] FATAL: %s worker p%d died: %s in %s:%d',
-				$worker_class,
-				$partition,
-				\substr( $error['message'] ?? '', 0, 500 ),
-				$error['file'] ?? '',
-				$error['line'] ?? 0
-			) );
-		} else {
+		// PHP already writes its own "PHP Fatal error: ..." entry for fatals,
+		// so don't duplicate it here. Only log when we got here some other way
+		// (exit() / die() — PHP is silent about those).
+		if ( ! $error || ! \in_array( $error['type'], [ E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR ], true ) ) {
 			// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
 			\error_log( \sprintf(
 				'[EventLogger] EXIT: %s worker p%d terminated by exit() or die()',
