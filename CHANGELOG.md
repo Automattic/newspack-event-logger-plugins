@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.35] - 2026-05-05
+
+### Changed
+
+- Aggregator: post-spoke-add settings push is now queued via `JobIntake` instead of called inline. The previous v2.4.33 implementation called `RemoteManager::sync_all_settings([$id])` synchronously from `ServersController::create_item()` / `update_item()`, which meant the admin "Add Server" REST response could block on outbound HTTP for up to ~3 minutes (`REQUEST_TIMEOUT = 15s` × 13 synced settings) if the new spoke URL was bad/slow. The new `RemoteManager::queue_sync_all_settings( $server_ids )` helper iterates the `newspack_event_aggregator_synced_settings` filter and queues one `sync_setting` job per setting via `JobIntake::queue`, with the targeted server list embedded in the job payload. JobWorker picks them up within milliseconds and dispatches via the same `handle_job` → `sync_setting` path the periodic uses; the admin response returns immediately. `handle_job`'s `sync_setting` branch now reads and forwards an optional `servers` parameter so per-spoke targeting survives the queue round-trip. Added regression tests for the new queue path and for `handle_job`'s servers-param handling. (`newspack-event-aggregator/includes/class-remote-manager.php`, `newspack-event-aggregator/includes/rest-api/class-servers-controller.php`, `tests/unit/RemoteManagerTest.php`)
+
 ## [2.4.34] - 2026-05-05
 
 ### Fixed

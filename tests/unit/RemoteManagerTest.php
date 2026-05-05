@@ -551,6 +551,73 @@ class RemoteManagerTest extends \PHPUnit\Framework\TestCase {
 		$this->assertTrue( true, 'handle_job with stale sync_setting should skip' );
 	}
 
+	public function test_handle_job_sync_setting_accepts_servers_param(): void {
+		// handle_job must forward the servers param through to sync_setting
+		// without erroring. The underlying restriction is exercised by
+		// test_sync_setting_specific_servers above.
+		RemoteManager::handle_job( [
+			'action'    => 'sync_setting',
+			'option'    => 'log_events',
+			'value'     => [ 'init' ],
+			'endpoint'  => '/wp-json/event-logger/v1/settings',
+			'servers'   => [ 'spoke-a' ],
+			'queued_at' => \time(),
+		] );
+
+		// Non-array servers should be coerced to null (full fan-out) without error.
+		RemoteManager::handle_job( [
+			'action'    => 'sync_setting',
+			'option'    => 'log_events',
+			'value'     => [ 'init' ],
+			'endpoint'  => '/wp-json/event-logger/v1/settings',
+			'servers'   => 'not-an-array',
+			'queued_at' => \time(),
+		] );
+
+		// Empty array also falls back to null.
+		RemoteManager::handle_job( [
+			'action'    => 'sync_setting',
+			'option'    => 'log_events',
+			'value'     => [ 'init' ],
+			'endpoint'  => '/wp-json/event-logger/v1/settings',
+			'servers'   => [],
+			'queued_at' => \time(),
+		] );
+
+		$this->assertTrue( true, 'handle_job must accept servers param in all forms without erroring' );
+	}
+
+	public function test_queue_sync_all_settings_queues_job_per_setting(): void {
+		// Stub event_logger_log_events option so it appears in load_config('full').
+		$GLOBALS['_wp_test_options']['event_logger_log_events'] = [ 'init', 'wp_loaded' ];
+		\Newspack_Event_Logger\Config::reset();
+
+		\add_filter(
+			'newspack_event_aggregator_synced_settings',
+			function ( $settings ) {
+				$settings[] = [
+					'local_option'  => 'event_logger_log_events',
+					'remote_option' => 'event_logger_log_events',
+					'endpoint'      => '/wp-json/perf-logger/v1/settings',
+				];
+				return $settings;
+			}
+		);
+
+		try {
+			$queued = RemoteManager::queue_sync_all_settings( [ 'spoke-a' ] );
+			$this->assertGreaterThanOrEqual( 1, $queued, 'Must queue at least one job for the registered synced setting' );
+
+			// No-op when called with empty server list.
+			$this->assertSame( 0, RemoteManager::queue_sync_all_settings( [] ) );
+		} finally {
+			unset( $GLOBALS['_wp_test_filters']['newspack_event_aggregator_synced_settings'] );
+			unset( $GLOBALS['_wp_test_options']['event_logger_log_events'] );
+			\Newspack_Event_Logger\Config::reset();
+		}
+	}
+
+
 	public function test_handle_job_sync_setting_default_endpoint(): void {
 		$parameters = [
 			'action'    => 'sync_setting',

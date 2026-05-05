@@ -218,13 +218,12 @@ class ServersController extends \WP_REST_Controller {
 			\Newspack_Event_Logger\Cron\Supervisor::request_restart();
 		}
 
-		// Push current settings to the new spoke immediately. Without this the
-		// new server only gets settings on the next 5-minute periodic tick AND
-		// only if a JobWorker happens to be cycling — worst case ~15 minutes
-		// of split-brain config. Sync runs only against the new server so we
-		// don't fan out to existing spokes for a no-op.
+		// Push current settings to the new spoke. Queues async sync_setting
+		// jobs targeted at this one server so the REST response returns
+		// immediately — JobWorker dispatches them within milliseconds. Without
+		// this the spoke would only get settings on the next 5-minute periodic.
 		if ( ! empty( $config['enabled'] ) && \class_exists( '\\Newspack_Event_Aggregator\\RemoteManager' ) ) {
-			RemoteManager::sync_all_settings( [ $id ] );
+			RemoteManager::queue_sync_all_settings( [ $id ] );
 		}
 
 		return new \WP_REST_Response(
@@ -293,7 +292,7 @@ class ServersController extends \WP_REST_Controller {
 		// (or never-synced) into the enabled set — same reasoning as create_item.
 		$now_enabled = ! empty( $registry->get( $id )['enabled'] ?? false );
 		if ( $now_enabled && ! $was_enabled && \class_exists( '\\Newspack_Event_Aggregator\\RemoteManager' ) ) {
-			RemoteManager::sync_all_settings( [ $id ] );
+			RemoteManager::queue_sync_all_settings( [ $id ] );
 		}
 
 		return new \WP_REST_Response(

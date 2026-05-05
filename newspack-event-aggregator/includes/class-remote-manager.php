@@ -125,8 +125,24 @@ class RemoteManager {
 						return;
 					}
 
+					// Optional targeted-server list. If provided, sync only fans
+					// out to those server IDs (used by ServersController to push
+					// settings to a freshly-added or re-enabled spoke without
+					// blocking the admin REST response on outbound HTTP).
+					$servers = $parameters['servers'] ?? null;
+					if ( null !== $servers ) {
+						if ( ! \is_array( $servers ) ) {
+							$servers = null;
+						} else {
+							$servers = \array_values( \array_filter( $servers, 'is_string' ) );
+							if ( empty( $servers ) ) {
+								$servers = null;
+							}
+						}
+					}
+
 					if ( \is_string( $option ) && '' !== $option ) {
-						self::sync_setting( $option, $value, $endpoint );
+						self::sync_setting( $option, $value, $endpoint, $servers );
 					}
 					return;
 
@@ -319,6 +335,65 @@ class RemoteManager {
 
 			self::sync_setting( $remote_option, $config[ $config_key ], $endpoint, $server_ids );
 		}
+	}
+
+	/**
+	 * Queue async sync_setting jobs targeting specific servers.
+	 *
+	 * Used by user-initiated server changes (add / re-enable) so the admin
+	 * REST response doesn't block on outbound HTTP. JobWorker picks the jobs
+	 * up within milliseconds and dispatches via handle_job → sync_setting.
+	 * Caller must provide non-empty server_ids.
+	 *
+	 * @param string[] $server_ids Server IDs to sync to.
+	 * @return int Number of jobs queued.
+	 */
+	public static function queue_sync_all_settings( array $server_ids ): int {
+		if ( empty( $server_ids ) || ! \class_exists( '\\Newspack_Event_Jobs\\JobIntake' ) ) {
+			return 0;
+		}
+
+		$settings = \apply_filters( 'newspack_event_aggregator_synced_settings', [] );
+		if ( ! \is_array( $settings ) ) {
+			return 0;
+		}
+		if ( \count( $settings ) > self::MAX_SETTINGS ) {
+			$settings = \array_slice( $settings, 0, self::MAX_SETTINGS );
+		}
+
+		$config  = Config::load_config( 'full' );
+		$queued  = 0;
+		$now     = \time();
+
+		foreach ( $settings as $setting ) {
+			$local_option  = $setting['local_option'] ?? '';
+			$remote_option = $setting['remote_option'] ?? $local_option;
+			$endpoint      = $setting['endpoint'] ?? '/wp-json/event-logger/v1/settings';
+
+			if ( '' === $local_option ) {
+				continue;
+			}
+			if ( ! self::is_allowed_endpoint( $endpoint ) ) {
+				continue;
+			}
+
+			$config_key = \str_replace( 'event_logger_', '', $local_option );
+			if ( ! isset( $config[ $config_key ] ) ) {
+				continue;
+			}
+
+			\Newspack_Event_Jobs\JobIntake::queue( 'remote_manager', [
+				'action'    => 'sync_setting',
+				'option'    => $remote_option,
+				'value'     => $config[ $config_key ],
+				'endpoint'  => $endpoint,
+				'servers'   => \array_values( $server_ids ),
+				'queued_at' => $now,
+			] );
+			++$queued;
+		}
+
+		return $queued;
 	}
 
 	/**
