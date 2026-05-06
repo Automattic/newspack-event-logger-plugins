@@ -509,11 +509,21 @@ class LogReader extends WorkerBase {
 	/**
 	 * Read live positions from memcache (for dashboard).
 	 *
+	 * Self-initializes Memcached. On hubs, performance-dashboards or another
+	 * plugin's REST controller will have already called Memcached::init() during
+	 * request bootstrap; on spokes that don't activate those plugins, nothing
+	 * else does — and Memcached::get() returns null when $memd is unset, making
+	 * the dashboard fall through to the 30s offsetlog fallback. Memcached::init
+	 * is idempotent ($init_attempted guards re-entry), so the cost on hubs is
+	 * a no-op; the fix only matters where the connection wasn't already open.
+	 *
 	 * @param string $name      Reader group name.
 	 * @param int    $partition Partition number.
 	 * @return array|null Positions keyed by input name, or null if not available.
 	 */
 	public static function get_live_positions( string $name, int $partition ): ?array {
+		$config = Config::load_config();
+		Memcached::init( $config['memcache_servers'] ?? Memcached::DEFAULT_SERVERS );
 		$host = \gethostname();
 		$val  = Memcached::get( "evlog:pos:{$host}:{$name}:p{$partition}" );
 		return \is_array( $val ) ? $val : null;

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.40] - 2026-05-05
+
+### Fixed
+
+- `LogReader::get_live_positions()`: self-initialize the Memcached connection. The dashboard's `WorkersController` calls this static method to read live worker cursor positions; on hubs (where `newspack-performance-dashboards` is active) and standalone servers (where `newspack-performance-workers` is active), `Memcached::init()` got called as a side effect of those plugins' REST controllers / cron handlers being constructed during request bootstrap, so subsequent `Memcached::get()` calls succeeded. On spokes that activate neither plugin (e.g. event-logger + event-jobs + event-dashboards + performance-logger only), nothing in the request lifecycle calls `Memcached::init()` before `get_live_positions()` queries memcache. `Memcached::get()` returns null when `$memd` is unset, so the dashboard always fell through to the 30-second offsetlog fallback — every worker appeared "stalled" except for a brief blip every 30s when the offsetlog flushed. `Memcached::init()` is idempotent (`$init_attempted` guards re-entry), so the lazy init here is a no-op when something else already initialized the connection. (`newspack-event-logger/includes/cron/class-log-reader.php`)
+
 ## [2.4.39] - 2026-05-05
 
 ### Fixed
