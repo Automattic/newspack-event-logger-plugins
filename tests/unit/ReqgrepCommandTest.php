@@ -422,13 +422,28 @@ class ReqgrepCommandTest extends TestCase {
 		$this->assertStringContainsString( '[64MB]', $result );
 	}
 
-	public function test_format_entry_synthesizes_request_id_on_first_line(): void {
+	public function test_output_request_emits_request_id_header(): void {
 		$this->make_cmd();
 
-		$entry  = [ 'n' => 1, 'ts' => 1700000000.0, 'k' => 'process (start)', 'm' => '1234 on host', 'rid' => 'abc123' ];
-		$result = $this->format_entry->invoke( $this->cmd, $entry );
+		// Header is printed before any entries — independent of which entry
+		// happens to be at n=1, so wp-admin requests (where process (start)
+		// can land at n=28+) still surface the rid for cross-referencing.
+		$lines = [
+			\json_encode( [ 'n' => 1,  'ts' => 1700000000.0, 'k' => 'option_get', 'rid' => 'abc123' ] ),
+			\json_encode( [ 'n' => 29, 'ts' => 1700000001.0, 'k' => 'process (start)', 'm' => '1234 on host', 'rid' => 'abc123' ] ),
+		];
 
-		$this->assertStringContainsString( 'request_id:abc123', $result );
+		\ob_start();
+		$this->output_request->invoke( $this->cmd, $lines );
+		$out = \ob_get_clean();
+
+		$this->assertStringContainsString( 'request_id:abc123', $out );
+		// Header should land *before* the first formatted entry.
+		$rid_pos   = \strpos( $out, 'request_id:abc123' );
+		$first_pos = \strpos( $out, 'option_get' );
+		$this->assertNotFalse( $rid_pos );
+		$this->assertNotFalse( $first_pos );
+		$this->assertLessThan( $first_pos, $rid_pos, 'request_id header must precede the first entry' );
 	}
 
 	public function test_format_entry_timestamp_shown_when_changes(): void {

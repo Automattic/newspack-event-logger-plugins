@@ -344,6 +344,14 @@ class LogManager {
 	 * @return bool True on success.
 	 */
 	public function message( string $category, array $data = [] ): bool {
+		// Make sure process (start) lands first. Without this, any code path that
+		// calls message()/error()/warning()/info() before the first start() leaves
+		// process (start) stranded at whatever line_number ensure_started later
+		// happens to fire at — wp-admin requests in particular show it at line 28+
+		// because admin hooks log via error()/warning() before start() is reached.
+		// ensure_started is re-entry safe ($this->started is set first thing).
+		$this->ensure_started();
+
 		// Redact sensitive query parameters in message URLs.
 		if ( isset( $data['m'] ) && \is_string( $data['m'] ) && false !== \strpos( $data['m'], '?' ) ) {
 			$data['m'] = \preg_replace( self::URL_REDACT_PATTERN, '$1$2=[REDACTED]', $data['m'] );

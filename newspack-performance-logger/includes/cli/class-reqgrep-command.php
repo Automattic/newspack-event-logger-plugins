@@ -598,6 +598,21 @@ class ReqgrepCommand extends WP_CLI_Command {
 		$this->fmt_last_number    = 0;
 		$this->fmt_last_timestamp = 0;
 
+		// Print the request_id once as a header so it's always available for
+		// cross-referencing, regardless of whether process (start) lands at line
+		// 1 or not. Pull the rid from the first entry that has one.
+		$rid = '';
+		foreach ( $lines as $line ) {
+			$entry = \json_decode( $line, true, 64 );
+			if ( \is_array( $entry ) && ! empty( $entry['rid'] ) ) {
+				$rid = $entry['rid'];
+				break;
+			}
+		}
+		if ( '' !== $rid ) {
+			echo \sprintf( "      %22s request_id:%s\n", '', $rid );
+		}
+
 		foreach ( $lines as $line ) {
 			$entry = \json_decode( $line, true, 64 );
 			if ( ! \is_array( $entry ) ) {
@@ -706,11 +721,6 @@ class ReqgrepCommand extends WP_CLI_Command {
 		// Increase indent on (start).
 		if ( \strpos( $key, '(start)' ) !== false ) {
 			$this->fmt_indent += 4;
-		}
-
-		// Synthesize request_id line after process (start).
-		if ( 1 === $number ) {
-			$output .= "\n" . \sprintf( "%4d: %22s %srequest_id:%s", 1, '', \str_repeat( ' ', $this->fmt_indent ), $entry['rid'] ?? '' );
 		}
 
 		$this->fmt_last_number    = $number;
