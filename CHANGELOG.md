@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.39] - 2026-05-05
+
 ### Fixed
 
 - LogManager: `process (start)` no longer lands at line 28+ on wp-admin requests. `message()`, `error()`, `warning()`, `info()` now go through `ensure_started()` so the very first call from any path triggers `log_process()` first, putting `process (start)` at `n=1` regardless of which entry point the caller used. Cron/job paths were unaffected (they explicitly called `Log::ensure_started()` up front), but admin hooks log via `error()`/`warning()` long before any `start()` happens, leaving `process (start)` stranded at whatever line counter we'd already reached. Re-entry safe — `ensure_started()` sets `$this->started = true` before calling `log_process()`. (`newspack-performance-logger/includes/class-log-manager.php`)
