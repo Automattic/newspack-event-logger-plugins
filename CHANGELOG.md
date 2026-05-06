@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.38] - 2026-05-05
+
 ### Changed
 
 - WorkerBase: drop the redundant `[EventLogger] FATAL: ... worker pN died: ...` log line that `handle_shutdown()` emitted on every PHP fatal. PHP already writes its own `PHP Fatal error: ...` entry to the same log, with the same file/line/message — our duplicate just doubled the noise without adding signal. The `[EventLogger] EXIT:` branch is kept (PHP is silent about clean `exit()` / `die()`, so that line is the only signal those leave behind).

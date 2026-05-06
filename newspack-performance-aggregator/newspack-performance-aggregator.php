@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Newspack Performance Aggregator
  * Description: Performance-specific hub logic for multi-server aggregation - settings sync, health-check, auto-tuning coordination.
- * Version: 2.4.37
+ * Version: 2.4.38
  * Author: Automattic
  * Author URI: https://newspack.com/
  * License: GPL-2.0-or-later
@@ -17,7 +17,7 @@
 \defined( 'ABSPATH' ) || exit;
 
 if ( ! \defined( 'NEWSPACK_PERFORMANCE_AGGREGATOR_VERSION' ) ) {
-	\define( 'NEWSPACK_PERFORMANCE_AGGREGATOR_VERSION', '2.4.37' );
+	\define( 'NEWSPACK_PERFORMANCE_AGGREGATOR_VERSION', '2.4.38' );
 }
 
 // Define the plugin directory and URL.
