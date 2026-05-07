@@ -141,11 +141,15 @@ class SettingsSync {
 
 		// Only hub nodes (enable_workers=true) should sync settings.
 		// Remote nodes receive settings but don't fan-out to prevent loops.
+		// Fail-closed: missing or non-true enable_workers means we are NOT a hub
+		// (matches event-aggregator/SettingsSync at class-settings-sync.php:113).
 		if ( \class_exists( 'Newspack_Event_Logger\Config' ) ) {
 			$config = \Newspack_Event_Logger\Config::load_config();
-			if ( isset( $config['enable_workers'] ) && false === $config['enable_workers'] ) {
+			if ( ! isset( $config['enable_workers'] ) || true !== $config['enable_workers'] ) {
 				return;
 			}
+		} else {
+			return; // Fail-closed: don't sync if Config unavailable.
 		}
 
 		if ( ! \class_exists( 'Newspack_Event_Jobs\JobIntake' ) ) {

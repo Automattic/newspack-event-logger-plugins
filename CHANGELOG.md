@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.42] - 2026-05-07
+
+### Fixed
+
+- `Newspack_Performance_Aggregator\SettingsSync::maybe_queue_sync` — fail-closed polarity now matches the file's documented intent and `Newspack_Event_Aggregator\SettingsSync` (`class-settings-sync.php:113`). Previously, missing or non-true `enable_workers` was *not* treated as "skip" — the test was `isset && false === $config['enable_workers']`, which let `null`/missing/empty count as "yes hub-mode" and silently fanned tuning settings (`log_events`, `custom_events`, etc.) out to remote spokes. The file's own comment ("Only hub nodes (enable_workers=true) should sync settings") was the canonical intent; the code was the bug. New test: `SettingsSyncTest::test_maybe_queue_sync_skips_when_workers_unset`. (`newspack-performance-aggregator/includes/class-settings-sync.php`)
+
 ## [2.4.41] - 2026-05-07
 
 ### Changed

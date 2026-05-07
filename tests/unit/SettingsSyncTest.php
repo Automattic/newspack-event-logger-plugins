@@ -315,6 +315,7 @@ class SettingsSyncTest extends TestCase {
 		$this->assertStringContainsString( 'event_logger_num_partitions', $content );
 	}
 
+
 	public function test_maybe_queue_sync_resolves_empty_value_to_default(): void {
 		\putenv( 'LOCAL_EVENT_LOGGER_CONF=' . \dirname( __DIR__ ) . '/configs/workers-enabled.php' );
 		\Newspack_Event_Logger\Config::reset();
