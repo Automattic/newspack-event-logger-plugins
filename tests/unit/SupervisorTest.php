@@ -237,25 +237,28 @@ class SupervisorTest extends TestCase {
 
 	// ── request_restart ──────────────────────────────────────────────────
 
-	public function test_request_restart_creates_marker_file(): void {
-		// Ensure base directory exists.
-		$base = Config::get_base_directory();
-		$this->assertDirectoryExists( $base );
+	public function test_request_restart_creates_lock_restart_file(): void {
+		// Ensure locks directory exists.
+		$locks_dir = Config::get_locks_directory();
+		\wp_mkdir_p( $locks_dir );
+		// Lock dir must exist for request_restart to drop the marker inside it.
+		\wp_mkdir_p( "{$locks_dir}/supervisor.lock.d" );
 
 		Supervisor::request_restart();
 
-		$marker = $base . '/restart_supervisor';
-		$this->assertFileExists( $marker, 'Restart marker should be created' );
+		$marker = "{$locks_dir}/supervisor.lock.d/restart";
+		$this->assertFileExists( $marker, 'Lock restart marker should be created in supervisor lock dir' );
 	}
 
 	public function test_request_restart_idempotent(): void {
-		$base = Config::get_base_directory();
+		$locks_dir = Config::get_locks_directory();
+		\wp_mkdir_p( "{$locks_dir}/supervisor.lock.d" );
 
 		// Call twice, should not throw.
 		Supervisor::request_restart();
 		Supervisor::request_restart();
 
-		$marker = $base . '/restart_supervisor';
+		$marker = "{$locks_dir}/supervisor.lock.d/restart";
 		$this->assertFileExists( $marker );
 	}
 
@@ -299,20 +302,30 @@ class SupervisorTest extends TestCase {
 
 	// ── check_config ────────────────────────────────────────────────────
 
-	public function test_check_config_with_restart_marker(): void {
+	public function test_check_config_rebuilds_worker_locks_each_tick(): void {
+		// Replaces the old restart-marker test. The new behavior: check_config
+		// rebuilds worker_locks from the topologies filter on every tick, so
+		// activation/deactivation propagates within ~15s without a marker file.
 		$supervisor = new Supervisor();
 
-		// Create restart marker.
-		$base = Supervisor::get_base_dir();
-		\touch( "{$base}/restart_supervisor" );
+		// Enable logging so check_config doesn't bail early.
+		\update_option( 'event_logger_enable_logging', '1' );
+		Config::reset();
+		$prop = new \ReflectionProperty( Supervisor::class, 'base_dir' );
+		$prop->setAccessible( true );
+		$prop->setValue( null, null );
 
 		$ref = new \ReflectionMethod( Supervisor::class, 'check_config' );
 		$ref->setAccessible( true );
-
-		// Should return false (supervisor should exit).
 		$result = $ref->invoke( $supervisor );
-		$this->assertFalse( $result );
-		$this->assertFileDoesNotExist( "{$base}/restart_supervisor" );
+
+		// check_config returns true (supervisor continues) and worker_locks
+		// is freshly rebuilt regardless of partition-count change.
+		$this->assertTrue( $result );
+
+		$locks = new \ReflectionProperty( Supervisor::class, 'worker_locks' );
+		$locks->setAccessible( true );
+		$this->assertIsArray( $locks->getValue( $supervisor ) );
 	}
 
 	public function test_check_config_normal(): void {

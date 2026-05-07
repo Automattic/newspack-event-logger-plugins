@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.41] - 2026-05-07
+
+### Changed
+
+- Supervisor: removed the supervisor-wide restart-marker file (`{base_directory}/restart_supervisor`). `check_config()` now rebuilds `worker_locks` from the registered_readers / standalone_workers filters on every tick (every 15s), so plugin activation/deactivation propagates within one config-check tick without needing a marker. `Supervisor::request_restart()` now uses the per-lock `Lock::request_restart` channel on the supervisor's own lock dir (`supervisor.lock.d/restart`) — unified with the worker restart mechanism. `kill_readers()` no longer chains a supervisor restart, since the next tick's filter rebuild already drops the killed readers. Activation/deactivation propagation latency is preserved (≤15s).
+
 ## [2.4.40] - 2026-05-05
 
 ### Fixed

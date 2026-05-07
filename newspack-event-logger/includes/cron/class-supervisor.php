@@ -270,13 +270,6 @@ class Supervisor extends SupervisorBase {
 	private function check_config(): bool {
 		$current_base_dir = self::get_base_dir();
 
-		// Check restart marker (plugins touch this on activation/deactivation).
-		if ( \file_exists( "{$current_base_dir}/restart_supervisor" ) ) {
-			// phpcs:ignore WordPressVIPMinimum.Functions.RestrictedFunctions.file_ops_unlink -- Base directory is configurable and validated in Config class.
-			@\unlink( "{$current_base_dir}/restart_supervisor" );
-			return false;
-		}
-
 		// Clear caches for long-running process.
 		// Must clear alloptions because WordPress caches all autoloaded options together.
 		\wp_cache_delete( 'alloptions', 'options' );
@@ -307,7 +300,8 @@ class Supervisor extends SupervisorBase {
 			return false;
 		}
 
-		// Handle partition count changes — release locks for retired partitions.
+		// Handle partition count changes — release locks for retired partitions BEFORE
+		// rebuilding worker_locks so the rebuild reflects only the new partition set.
 		if ( $new_num_partitions < $this->num_partitions ) {
 			$locks_dir = Config::get_locks_directory();
 			foreach ( $this->log_readers as $name => $reader_config ) {
@@ -325,10 +319,13 @@ class Supervisor extends SupervisorBase {
 			}
 		}
 
-		if ( $new_num_partitions !== $this->num_partitions ) {
-			$this->num_partitions = $new_num_partitions;
-			$this->build_worker_locks();
-		}
+		$this->num_partitions = $new_num_partitions;
+
+		// Always rebuild worker_locks: catches plugin activation/deactivation and
+		// any other change to the registered_readers / standalone_workers filter
+		// values within one check_config tick. Filter iteration is cheap; no
+		// supervisor-restart-marker file or graceful-restart dance needed.
+		$this->build_worker_locks();
 
 		$this->cleanup_stale_partitions();
 
@@ -532,14 +529,23 @@ class Supervisor extends SupervisorBase {
 	/**
 	 * Request supervisor restart.
 	 *
-	 * Plugins call this on activation so supervisor picks up new log readers.
+	 * Uses the same Lock::request_restart channel that workers use — drops a
+	 * `restart` file in the supervisor's lock dir, which SupervisorBase::should_restart
+	 * picks up on its next tick. Unified with the worker restart mechanism; no
+	 * separate marker file.
+	 *
+	 * In practice, callers rarely need this: the supervisor rebuilds its worker_locks
+	 * from the registered_readers / standalone_workers filters on every check_config
+	 * tick (every 15s), so plugin activation/deactivation propagates without an
+	 * explicit restart. Still useful for forcing a fresh process (e.g., to flush
+	 * accumulated state).
 	 */
 	public static function request_restart(): void {
 		try {
-			$marker = self::get_base_dir() . '/restart_supervisor';
-			@\touch( $marker ); // phpcs:ignore WordPressVIPMinimum.Functions.RestrictedFunctions.file_ops_touch
+			$locks_dir = Config::get_locks_directory();
+			Lock::request_restart( "{$locks_dir}/supervisor.lock.d" );
 		} catch ( \Throwable $e ) {
-			// Ignore - supervisor restarts hourly anyway.
+			// Ignore - supervisor restarts every ~10 minutes anyway.
 		}
 	}
 
@@ -567,8 +573,9 @@ class Supervisor extends SupervisorBase {
 				}
 			}
 
-			// Also request supervisor restart to update its worker list.
-			self::request_restart();
+			// No supervisor restart needed: supervisor rebuilds worker_locks from
+			// filter values on every check_config tick. The forced lock releases
+			// above are sufficient to make the next tick stop tracking these.
 		} catch ( \Throwable $e ) {
 			// Ignore.
 		}
