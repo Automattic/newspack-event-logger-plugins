@@ -41,7 +41,7 @@ class PerformanceLoggerAdminTest extends TestCase {
 		// Clean up mock asset files.
 		@\unlink( PERFORMANCE_LOGGER_DIR . 'build/admin/index.asset.php' );
 		@\unlink( PERFORMANCE_LOGGER_DIR . 'hook_categories.json' );
-		@\unlink( EVENT_LOGGER_DIR . 'event-logger-config.php' );
+		@\unlink( EVENT_LOGGER_DIR . 'newspack-event-logger-config.php' );
 		@\rmdir( PERFORMANCE_LOGGER_DIR . 'build/admin' );
 		@\rmdir( PERFORMANCE_LOGGER_DIR . 'build' );
 		parent::tearDown();
@@ -290,7 +290,7 @@ class PerformanceLoggerAdminTest extends TestCase {
 		// Create a mock config file with recommended_log_events.
 		@\mkdir( EVENT_LOGGER_DIR, 0755, true );
 		\file_put_contents(
-			EVENT_LOGGER_DIR . 'event-logger-config.php',
+			EVENT_LOGGER_DIR . 'newspack-event-logger-config.php',
 			'<?php return ["recommended_log_events" => ["init", "wp_head"]];'
 		);
 

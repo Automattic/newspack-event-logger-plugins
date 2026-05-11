@@ -360,7 +360,7 @@ class Config {
 		$config = [];
 
 		// Load main config file.
-		$config_path = \dirname( __DIR__ ) . '/event-logger-config.php';
+		$config_path = \dirname( __DIR__ ) . '/newspack-event-logger-config.php';
 		if ( \file_exists( $config_path ) ) {
 			$config = self::load_config_file( $config, $config_path );
 		}

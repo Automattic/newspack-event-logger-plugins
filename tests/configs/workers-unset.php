@@ -1,6 +1,6 @@
 <?php
 // Config that simulates "enable_workers not configured." The plugin's baseline
-// event-logger-config.php sets enable_workers=true; load_config() merges it
+// newspack-event-logger-config.php sets enable_workers=true; load_config() merges it
 // into every layered config, so simply omitting the key here would leave the
 // baseline true value in place. Setting the key to null makes isset() return
 // false in the merged result, exercising the "missing/unset" code path in

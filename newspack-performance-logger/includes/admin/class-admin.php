@@ -70,7 +70,7 @@ class Admin {
 		}
 
 		// Load recommended hooks for settings page.
-		$config_file = \defined( 'EVENT_LOGGER_DIR' ) ? EVENT_LOGGER_DIR . 'event-logger-config.php' : '';
+		$config_file = \defined( 'EVENT_LOGGER_DIR' ) ? EVENT_LOGGER_DIR . 'newspack-event-logger-config.php' : '';
 		if ( $config_file && \file_exists( $config_file ) ) {
 			$file_config = require $config_file;
 			\wp_localize_script( 'performance-logger-admin', 'eventLoggerRecommendedHooks', $file_config['recommended_log_events'] ?? [] );
