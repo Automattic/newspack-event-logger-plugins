@@ -156,7 +156,7 @@ class SomeClassTest extends TestCase {
 
 ```bash
 # Deploy to container
-docker exec eve-pyrobase1-1 /services/pyrobase/setup/pyrobase.sh
+docker exec eve-pyrobase1-1 /services/pyrobase/setup/newspack-pyrobase.sh
 
 # Run all tests
 docker exec eve-pyrobase1-1 bash -lc 'cd /usr/src/newspack-event-logger-plugins/tests && phpunit'
