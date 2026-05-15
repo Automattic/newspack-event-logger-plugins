@@ -27,6 +27,7 @@ rm -rf /tmp/event-logger-test-locks 2>/dev/null
 phpunit --configuration phpunit.xml \
     --coverage-clover /volumes/pyrobase/tmp/event-logger-coverage/clover.xml \
     --coverage-html /volumes/pyrobase/tmp/event-logger-coverage \
+	--enforce-time-limit \
     "$@"
 
 echo ""
